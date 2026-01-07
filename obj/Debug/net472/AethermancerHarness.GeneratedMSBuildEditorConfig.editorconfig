@@ -1,0 +1,5 @@
+is_global = true
+build_property.RootNamespace = AethermancerHarness
+build_property.ProjectDir = /home/klappec/gitrepos/AethermancerHarness/
+build_property.EnableComHosting = 
+build_property.EnableGeneratedComInterfaceComImportInterop = 

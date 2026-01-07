@@ -1,0 +1,9 @@
+/home/klappec/gitrepos/AethermancerHarness/bin/Debug/net472/AethermancerHarness.dll
+/home/klappec/gitrepos/AethermancerHarness/bin/Debug/net472/AethermancerHarness.pdb
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.csproj.AssemblyReference.cache
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.GeneratedMSBuildEditorConfig.editorconfig
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.AssemblyInfoInputs.cache
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.AssemblyInfo.cs
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.csproj.CoreCompileInputs.cache
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.dll
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.pdb
