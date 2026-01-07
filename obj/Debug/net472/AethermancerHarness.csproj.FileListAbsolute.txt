@@ -7,3 +7,4 @@
 /home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.csproj.CoreCompileInputs.cache
 /home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.dll
 /home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.pdb
+/home/klappec/gitrepos/AethermancerHarness/obj/Debug/net472/AethermancerHarness.sourcelink.json

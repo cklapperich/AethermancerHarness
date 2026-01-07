@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Simulation harness for Aethermancer AI training")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e3888fb0ce95d1f03a46b9a5743a613d8cd3a05a")]
 [assembly: System.Reflection.AssemblyProductAttribute("AethermancerHarness")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AethermancerHarness")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
