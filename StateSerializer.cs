@@ -507,7 +507,7 @@ namespace AethermancerHarness
             var result = new JObject
             {
                 ["phase"] = "EXPLORATION",
-                ["player"] = new JObject { ["x"] = playerPos.x, ["y"] = playerPos.y, ["z"] = playerPos.z },
+                ["player"] = new JObject { ["x"] = (double)playerPos.x, ["y"] = (double)playerPos.y, ["z"] = (double)playerPos.z },
                 ["area"] = area,
                 ["zone"] = zone,
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
@@ -535,9 +535,9 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["index"] = i,
-                    ["x"] = pos.x,
-                    ["y"] = pos.y,
-                    ["z"] = pos.z,
+                    ["x"] = (double)pos.x,
+                    ["y"] = (double)pos.y,
+                    ["z"] = (double)pos.z,
                     ["defeated"] = group.EncounterDefeated,
                     ["canVoidBlitz"] = !group.EncounterDefeated && group.CanBeAetherBlitzed(),
                     ["encounterType"] = group.EncounterData?.EncounterType.ToString() ?? "Unknown",
@@ -560,7 +560,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "AETHER_SPRING",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["used"] = spring.WasUsedUp
                 });
             }
@@ -572,7 +572,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "MONSTER_GROUP",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["defeated"] = mg.WasUsedUp
                 });
             }
@@ -584,7 +584,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "CHEST",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["opened"] = chest.WasUsedUp
                 });
             }
@@ -595,7 +595,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "MERCHANT",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z
                 });
             }
 
@@ -605,7 +605,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "MONSTER_SHRINE",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["used"] = map.MonsterShrine.WasUsedUp
                 });
             }
@@ -617,7 +617,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "NPC",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["talked"] = npc.WasUsedUp
                 });
             }
@@ -629,7 +629,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "EVENT",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["completed"] = evt.WasUsedUp
                 });
             }
@@ -641,7 +641,7 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["type"] = "SECRET_ROOM",
-                    ["x"] = pos.x, ["y"] = pos.y, ["z"] = pos.z,
+                    ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["found"] = secret.WasUsedUp
                 });
             }

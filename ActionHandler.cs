@@ -738,8 +738,8 @@ namespace AethermancerHarness
             return JsonHelper.Serialize(new
             {
                 success = true,
-                from = new { x = oldPos.x, y = oldPos.y, z = oldPos.z },
-                to = new { x, y, z }
+                from = new { x = (double)oldPos.x, y = (double)oldPos.y, z = (double)oldPos.z },
+                to = new { x = (double)x, y = (double)y, z = (double)z }
             });
         }
 
