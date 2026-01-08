@@ -15,10 +15,14 @@ A BepInEx plugin that exposes an HTTP API for AI agent training in the Aetherman
 - [x] Void Blitz automation (full animation, bypasses distance checks)
 - [x] Post-combat skill selection
 - [x] Equipment selection (assign to monster or scrap for gold)
+- [x] auto loot all 
+- [x] aether springs
 
 **Not Yet Implemented:**
 - [ ] Speed optimization (`Time.timeScale` adjustments)
 - [ ] Headless mode (Steam integration issues - requires visible window)
+- [ ] Automated testing
+- [ ] Turn-by-turn combat logging, serialized to text.
 
 ## Installation
 
@@ -52,10 +56,11 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | POST | `/exploration/loot-all` | Break all destructibles + collect loot |
 | POST | `/skill-select` | Select skill during level-up |
 | POST | `/npc/interact` | Start dialogue with NPC (auto-progresses to choices) |
-| POST | `/choice` | Universal choice handler (dialogue, equipment, merchant) |
+| POST | `/choice` | Universal choice handler (dialogue, equipment, merchant, aether spring) |
 | POST | `/merchant/interact` | Open merchant shop (auto-teleports) |
+| POST | `/aether-spring/interact` | Open aether spring boon selection |
 
-See [CLAUDE_GUIDE.md](CLAUDE_GUIDE.md) for detailed API documentation.
+See [api_doc.md](api_doc.md) for detailed API documentation.
 
 ### Unified Choice Pattern
 
@@ -68,6 +73,7 @@ The `/choice` endpoint handles all selection-based interactions. The endpoint au
 | `MERCHANT` | Buy item or leave shop | Item indices to buy, last index to leave |
 | `MONSTER_SELECTION` | Pick monster at shrine | `{"choiceIndex": 0}` |
 | `DIFFICULTY_SELECTION` | Select run difficulty | `{"choiceIndex": 1}` |
+| `AETHER_SPRING` | Select boon | `{"choiceIndex": 0}` for left, `1` for right |
 
 All phases return a `choices` array in their `/state` response. The last choice is often a special action (scrap, leave shop, etc.).
 
@@ -313,15 +319,22 @@ curl -X POST http://localhost:8080/choice \
 
 ```
 AethermancerHarness/
-├── Plugin.cs            # BepInEx entry point, Harmony init, F11 debug
-├── HarnessServer.cs     # HTTP server and routing
-├── StateSerializer.cs   # Game state → JSON/text conversion
-├── ActionHandler.cs     # Action execution (combat, teleport, interact, void blitz)
-├── VoidBlitzBypass.cs   # Harmony patches for void blitz distance bypass
-├── build.sh             # Build and deploy script
-├── launch.sh            # Launch game via Steam
-├── CLAUDE_GUIDE.md      # AI agent usage guide
-└── README.md            # This file
+├── src/
+│   ├── Plugin.cs            # BepInEx entry point, Harmony init, F11 debug
+│   ├── HarnessServer.cs     # HTTP server and routing
+│   ├── StateSerializer.cs   # Game state → JSON conversion
+│   ├── StateModels.cs       # Response data models
+│   ├── Enums.cs             # Game phase and type enums
+│   ├── ActionHandler.cs     # Core action execution
+│   ├── CombatActions.cs     # Combat-specific actions
+│   ├── ExplorationActions.cs # Exploration actions (teleport, interact, loot)
+│   ├── MenuActions.cs       # Menu/dialogue/merchant actions
+│   └── VoidBlitzBypass.cs   # Harmony patches for void blitz distance bypass
+├── build.sh                 # Build and deploy script
+├── launch.sh                # Launch game via Steam
+├── api_doc.md               # Detailed API documentation
+├── CLAUDE_GUIDE.md          # AI agent usage guide
+└── README.md                # This file
 ```
 
 ## Key Game Entry Points
