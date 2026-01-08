@@ -7,11 +7,15 @@ namespace AethermancerHarness
 {
     public static class ActionHandler
     {
+        // Flag to toggle condensed state responses
+        public static bool UseCondensedState { get; set; } = true;
+
         // Cached reflection methods
         private static readonly MethodInfo GetDescriptionDamageMethod;
         private static readonly MethodInfo ContinueMethod;
         private static readonly MethodInfo InputConfirmMethod;
         private static readonly MethodInfo ConfirmVoidBlitzTargetMethod;
+        private static readonly MethodInfo ConfirmSelectionMethod;
 
         static ActionHandler()
         {
@@ -29,6 +33,10 @@ namespace AethermancerHarness
 
             ConfirmVoidBlitzTargetMethod = typeof(PlayerMovementController).GetMethod(
                 "ConfirmVoidBlitzTarget",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            ConfirmSelectionMethod = typeof(MonsterShrineMenu).GetMethod(
+                "ConfirmSelection",
                 BindingFlags.NonPublic | BindingFlags.Instance);
         }
 
@@ -170,9 +178,10 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { success = false, error });
 
             Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
+            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
             actor.State.StartAction(skill, target, target);
 
-            return FinishCombatAction(skill.Action.Name, actor.Name, target);
+            return FinishCombatAction(skill.Action.Name, actor.Name, target, snapshot: snapshot);
         }
 
         public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
@@ -209,12 +218,13 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { success = false, error });
 
             Plugin.Log.LogInfo($"Using consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
+            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
             currentMonster.State.StartAction(consumable, target, target);
 
-            return FinishCombatAction(consumable.Consumable?.Name ?? "", currentMonster.Name, target, isConsumable: true);
+            return FinishCombatAction(consumable.Consumable?.Name ?? "", currentMonster.Name, target, isConsumable: true, snapshot: snapshot);
         }
 
-        private static string FinishCombatAction(string actionName, string actorName, ITargetable target, bool isConsumable = false)
+        private static string FinishCombatAction(string actionName, string actorName, ITargetable target, bool isConsumable = false, CombatStateSnapshot snapshot = null)
         {
             bool ready = WaitForReady(30000);
 
@@ -240,6 +250,11 @@ namespace AethermancerHarness
                 return result.ToString(Newtonsoft.Json.Formatting.None);
             }
 
+            // Check if round changed - if so, use full state (condensed would include enemy action effects)
+            var currentRound = CombatController.Instance?.Timeline?.CurrentRound ?? 0;
+            bool roundChanged = snapshot != null && snapshot.Round != currentRound;
+            bool useCondensed = snapshot != null && !roundChanged;
+
             var response = new JObject
             {
                 ["success"] = true,
@@ -247,8 +262,14 @@ namespace AethermancerHarness
                 ["actor"] = actorName,
                 ["target"] = GetTargetName(target),
                 ["waitedForReady"] = ready,
-                ["state"] = JObject.Parse(StateSerializer.ToJson())
+                ["state"] = useCondensed
+                    ? JObject.Parse(StateSerializer.BuildCondensedCombatStateJson(snapshot))
+                    : JObject.Parse(StateSerializer.ToJson())
             };
+            if (useCondensed)
+                response["condensed"] = true;
+            if (roundChanged)
+                response["roundChanged"] = true;
             if (isConsumable)
                 response["isConsumable"] = true;
 
@@ -676,12 +697,19 @@ namespace AethermancerHarness
 
             Plugin.Log.LogInfo($"ExecuteVoidBlitz: Targeting group {monsterGroupIndex}, monster {targetMonster.name}");
 
-            VoidBlitzBypass.IsActive = true;
-            VoidBlitzBypass.TargetGroup = targetGroup;
-            VoidBlitzBypass.TargetMonster = targetMonster;
+            // Store monster name before main thread call (can't access Unity objects across threads safely)
+            var targetMonsterName = targetMonster.name;
 
-            PlayerController.Instance.AetherBlitzTargetGroup = targetGroup;
-            PlayerController.Instance.TryToStartAetherBlitz(targetMonster);
+            // Run void blitz trigger on main thread (UI operations like poise preview require main thread)
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                VoidBlitzBypass.IsActive = true;
+                VoidBlitzBypass.TargetGroup = targetGroup;
+                VoidBlitzBypass.TargetMonster = targetMonster;
+
+                PlayerController.Instance.AetherBlitzTargetGroup = targetGroup;
+                PlayerController.Instance.TryToStartAetherBlitz(targetMonster);
+            });
 
             Plugin.Log.LogInfo("ExecuteVoidBlitz: Void blitz triggered successfully");
 
@@ -690,7 +718,7 @@ namespace AethermancerHarness
                 success = true,
                 action = "void_blitz",
                 monsterGroupIndex,
-                targetMonster = targetMonster.name,
+                targetMonster = targetMonsterName,
                 note = "Animation playing, combat will start shortly"
             });
         }
@@ -748,6 +776,52 @@ namespace AethermancerHarness
             if (GameStateManager.Instance?.IsCombat ?? false)
                 return JsonHelper.Serialize(new { success = false, error = "Cannot interact during combat" });
 
+            // Check for monster shrine - teleport and interact regardless of distance
+            var shrine = LevelGenerator.Instance?.Map?.MonsterShrine;
+            if (shrine != null && !shrine.WasUsedUp)
+            {
+                Plugin.Log.LogInfo($"ExecuteInteract: Found unused monster shrine, teleporting and interacting");
+                try
+                {
+                    Plugin.RunOnMainThreadAndWait(() =>
+                    {
+                        // Teleport player near shrine
+                        var shrinePos = shrine.transform.position;
+                        var playerMovement = PlayerMovementController.Instance;
+                        if (playerMovement != null)
+                        {
+                            var targetPos = new UnityEngine.Vector3(shrinePos.x, shrinePos.y - 5f, shrinePos.z);
+                            playerMovement.transform.position = targetPos;
+                            Plugin.Log.LogInfo($"ExecuteInteract: Teleported player to shrine at ({targetPos.x:F1}, {targetPos.y:F1})");
+                        }
+
+                        shrine.StartBaseInteraction();
+                    });
+
+                    // Wait for shrine menu to open
+                    var startTime = DateTime.Now;
+                    while (!StateSerializer.IsInMonsterSelection() && !TimedOut(startTime, 3000))
+                    {
+                        System.Threading.Thread.Sleep(50);
+                    }
+
+                    if (StateSerializer.IsInMonsterSelection())
+                    {
+                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact", type = "MONSTER_SHRINE" });
+                    }
+                    else
+                    {
+                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact_pending", type = "MONSTER_SHRINE", note = "Shrine triggered, menu may still be opening" });
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogError($"ExecuteInteract: Shrine interaction failed: {ex.Message}");
+                    return JsonHelper.Serialize(new { success = false, error = $"Shrine interaction failed: {ex.Message}" });
+                }
+            }
+
+            // Fallback to generic interact for other interactables
             PlayerController.Instance?.OnInteract();
             return JsonHelper.Serialize(new { success = true, action = "interact" });
         }
@@ -1029,6 +1103,1334 @@ namespace AethermancerHarness
             }
 
             return JsonHelper.Serialize(new { success = false, error = $"Invalid skill index: {skillIndex}. Use 0-2 for skills, -1 for max health." });
+        }
+
+        // =====================================================
+        // UNIFIED CHOICE HANDLER
+        // =====================================================
+
+        /// <summary>
+        /// Unified choice handler that routes to the appropriate handler based on game state.
+        /// Handles dialogue choices, equipment selection, monster selection, and other choice-based interactions.
+        /// </summary>
+        /// <param name="choiceIndex">Index of the choice to select</param>
+        /// <param name="shift">Optional shift for monster selection: "normal" or "shifted"</param>
+        public static string ExecuteChoice(int choiceIndex, string shift = null)
+        {
+            // Check equipment selection first (after picking equipment from dialogue/loot)
+            if (StateSerializer.IsInEquipmentSelection())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to equipment selection handler (index {choiceIndex})");
+                return ExecuteEquipmentChoice(choiceIndex);
+            }
+
+            // Check monster selection (shrine/starter)
+            if (StateSerializer.IsInMonsterSelection())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to monster selection handler (index {choiceIndex}, shift: {shift ?? "default"})");
+                return ExecuteMonsterSelectionChoice(choiceIndex, shift);
+            }
+
+            // Check dialogue
+            if (IsDialogueOpen())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to dialogue choice handler (index {choiceIndex})");
+                return ExecuteDialogueChoice(choiceIndex);
+            }
+
+            return JsonHelper.Serialize(new { success = false, error = "No active choice context (not in dialogue, equipment selection, or monster selection)" });
+        }
+
+        // =====================================================
+        // MONSTER SELECTION (Shrine/Starter)
+        // =====================================================
+
+        /// <summary>
+        /// Handle monster selection from shrine or starter selection screen.
+        /// Auto-confirms the selection (skips confirmation popup).
+        /// </summary>
+        /// <param name="choiceIndex">Index of the monster choice</param>
+        /// <param name="shift">Optional shift: "normal" or "shifted". If not specified, uses normal.</param>
+        public static string ExecuteMonsterSelectionChoice(int choiceIndex, string shift = null)
+        {
+            var menu = UIController.Instance?.MonsterShrineMenu;
+            if (menu == null || !menu.IsOpen)
+                return JsonHelper.Serialize(new { success = false, error = "Monster selection menu not open" });
+
+            var selection = menu.MonsterSelection;
+            var displayedMonsters = menu.DisplayedMonsters;
+
+            if (displayedMonsters == null || displayedMonsters.Count == 0)
+                return JsonHelper.Serialize(new { success = false, error = "No monsters available" });
+
+            // Calculate total count including random entry
+            int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
+
+            // Validate choice index
+            if (choiceIndex < 0 || choiceIndex >= totalCount)
+                return JsonHelper.Serialize(new { success = false, error = $"Invalid choice index: {choiceIndex}. Valid range: 0-{totalCount - 1}" });
+
+            // Check if selecting random
+            var isRandom = selection.HasRandomMonster && choiceIndex == selection.RandomMonsterPosition;
+
+            // Get monster name - for random, use "Random Monster"; otherwise adjust index to skip random
+            string monsterName;
+            Monster selectedMonster = null;
+            if (isRandom)
+            {
+                monsterName = "Random Monster";
+            }
+            else
+            {
+                // Adjust index: if random exists and we're after its position, subtract 1
+                int adjustedIndex = choiceIndex;
+                if (selection.HasRandomMonster && choiceIndex > selection.RandomMonsterPosition)
+                {
+                    adjustedIndex = choiceIndex - 1;
+                }
+                selectedMonster = displayedMonsters[adjustedIndex];
+                monsterName = selectedMonster?.Name ?? "Unknown";
+            }
+
+            // Parse shift parameter
+            EMonsterShift targetShift = EMonsterShift.Normal;
+            if (!string.IsNullOrEmpty(shift))
+            {
+                if (shift.Equals("shifted", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    targetShift = EMonsterShift.Shifted;
+                }
+                else if (!shift.Equals("normal", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return JsonHelper.Serialize(new { success = false, error = $"Invalid shift value: '{shift}'. Use 'normal' or 'shifted'." });
+                }
+            }
+
+            // Validate shifted variant is available if requested
+            if (targetShift == EMonsterShift.Shifted && !isRandom)
+            {
+                bool hasShiftedVariant = InventoryManager.Instance?.HasShiftedMementosOfMonster(selectedMonster) ?? false;
+                if (!hasShiftedVariant)
+                {
+                    return JsonHelper.Serialize(new { success = false, error = $"Shifted variant not available for {monsterName}" });
+                }
+            }
+
+            Plugin.Log.LogInfo($"ExecuteMonsterSelectionChoice: Selecting monster at index {choiceIndex}: {monsterName} (isRandom: {isRandom}, shift: {targetShift})");
+
+            try
+            {
+                // Run UI operations on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Set the selection index
+                    selection.SetSelectedIndex(choiceIndex);
+
+                    // Set the shift (only applies to non-random monsters with shifted variants)
+                    if (!isRandom && targetShift != selection.CurrentShift)
+                    {
+                        selection.CurrentShift = targetShift;
+                        selectedMonster.SetShift(targetShift);
+                        Plugin.Log.LogInfo($"ExecuteMonsterSelectionChoice: Set shift to {targetShift}");
+                    }
+
+                    // Auto-confirm via reflection (skip confirmation popup)
+                    if (ConfirmSelectionMethod != null)
+                    {
+                        ConfirmSelectionMethod.Invoke(menu, null);
+                        Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Called ConfirmSelection()");
+                    }
+                    else
+                    {
+                        Plugin.Log.LogWarning("ExecuteMonsterSelectionChoice: ConfirmSelection method not found, falling back to OnConfirm");
+                        menu.OnConfirm();
+                    }
+                });
+
+                // Wait for the selection to process
+                System.Threading.Thread.Sleep(500);
+
+                // Check what state we transitioned to
+                // Monster selection can lead to:
+                // 1. MonsterSelectMenu opening (if player has 3 monsters - replacement needed)
+                // 2. PostCombatMenu for XP distribution
+                // 3. Back to exploration
+
+                // Wait a bit more for state transitions
+                var startTime = DateTime.Now;
+                while (!TimedOut(startTime, 3000))
+                {
+                    // If equipment selection opened (for replacement), return that state
+                    if (StateSerializer.IsInEquipmentSelection())
+                    {
+                        Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Transitioned to equipment selection (monster replacement)");
+                        // Note: This is actually MonsterSelectMenu with ShrineMonsterToReplace type
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            action = "monster_selected",
+                            selected = monsterName,
+                            shift = targetShift.ToString(),
+                            isRandom = isRandom,
+                            phase = "EQUIPMENT_SELECTION",
+                            note = "Select which monster to replace"
+                        });
+                    }
+
+                    // If skill selection opened (post-rebirth XP), return that state
+                    if (StateSerializer.IsInSkillSelection())
+                    {
+                        Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Transitioned to skill selection");
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            action = "monster_selected",
+                            selected = monsterName,
+                            shift = targetShift.ToString(),
+                            isRandom = isRandom,
+                            phase = "SKILL_SELECTION",
+                            note = "Monster rebirthed with XP - select skill"
+                        });
+                    }
+
+                    // If still in monster selection, wait a bit more
+                    if (StateSerializer.IsInMonsterSelection())
+                    {
+                        System.Threading.Thread.Sleep(100);
+                        continue;
+                    }
+
+                    // Otherwise we're done - back to exploration
+                    break;
+                }
+
+                // Final state check
+                if (StateSerializer.IsInSkillSelection())
+                {
+                    return StateSerializer.GetSkillSelectionStateJson();
+                }
+
+                Plugin.Log.LogInfo($"ExecuteMonsterSelectionChoice: Monster '{monsterName}' selected successfully (shift: {targetShift})");
+                return JsonHelper.Serialize(new
+                {
+                    success = true,
+                    action = "monster_selected",
+                    selected = monsterName,
+                    shift = targetShift.ToString(),
+                    isRandom = isRandom,
+                    phase = "EXPLORATION"
+                });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteMonsterSelectionChoice: Exception - {ex.Message}\n{ex.StackTrace}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during monster selection: {ex.Message}" });
+            }
+        }
+
+        // =====================================================
+        // EQUIPMENT SELECTION
+        // =====================================================
+
+        /// <summary>
+        /// Handle equipment selection choice. Monsters are indices 0 to party.Count-1,
+        /// and scrap is index party.Count.
+        /// </summary>
+        public static string ExecuteEquipmentChoice(int choiceIndex)
+        {
+            var menu = UIController.Instance?.MonsterSelectMenu;
+            if (menu == null || !menu.IsOpen)
+                return JsonHelper.Serialize(new { success = false, error = "Equipment selection menu not open" });
+
+            var party = MonsterManager.Instance?.Active;
+            if (party == null)
+                return JsonHelper.Serialize(new { success = false, error = "No party available" });
+
+            int scrapIndex = party.Count;
+
+            // Validate choice index
+            if (choiceIndex < 0 || choiceIndex > scrapIndex)
+                return JsonHelper.Serialize(new { success = false, error = $"Invalid choice index: {choiceIndex}. Valid range: 0-{scrapIndex}" });
+
+            // Handle scrap
+            if (choiceIndex == scrapIndex)
+            {
+                Plugin.Log.LogInfo("ExecuteEquipmentChoice: Scrapping equipment");
+                return ExecuteEquipmentScrap(menu);
+            }
+
+            // Handle assign to monster
+            var targetMonster = party[choiceIndex];
+            Plugin.Log.LogInfo($"ExecuteEquipmentChoice: Assigning equipment to {targetMonster.Name} (index {choiceIndex})");
+            return ExecuteEquipmentAssign(menu, targetMonster, choiceIndex);
+        }
+
+        private static string ExecuteEquipmentAssign(MonsterSelectMenu menu, Monster targetMonster, int monsterIndex)
+        {
+            var newEquipment = menu.NewEquipmentInstance;
+            if (newEquipment == null)
+                return JsonHelper.Serialize(new { success = false, error = "No equipment to assign" });
+
+            var prevEquipment = targetMonster.Equipment?.Equipment;
+            var newEquipName = newEquipment.Equipment?.GetName() ?? "Unknown";
+
+            try
+            {
+                // Run UI operations on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Select the monster in the menu list
+                    menu.MenuList.SelectByIndex(monsterIndex);
+
+                    // Trigger the menu item selection via InputConfirm
+                    if (InputConfirmMethod != null)
+                    {
+                        InputConfirmMethod.Invoke(menu.MenuList, null);
+                    }
+                });
+
+                // Wait for the UI to process
+                System.Threading.Thread.Sleep(600);
+
+                // Check if we're still in equipment selection (happens when monster had equipment - trade scenario)
+                if (StateSerializer.IsInEquipmentSelection())
+                {
+                    var prevEquipName = prevEquipment?.Equipment?.GetName() ?? "Unknown";
+                    Plugin.Log.LogInfo($"ExecuteEquipmentAssign: Trade occurred - now holding {prevEquipName}");
+                    return JsonHelper.Serialize(new
+                    {
+                        success = true,
+                        action = "equipment_trade",
+                        assignedTo = targetMonster.Name,
+                        assigned = newEquipName,
+                        nowHolding = prevEquipName,
+                        phase = "EQUIPMENT_SELECTION",
+                        state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
+                    });
+                }
+
+                // Equipment assigned, back to exploration
+                Plugin.Log.LogInfo($"ExecuteEquipmentAssign: Equipment assigned to {targetMonster.Name}");
+                return JsonHelper.Serialize(new
+                {
+                    success = true,
+                    action = "equipment_assigned",
+                    assignedTo = targetMonster.Name,
+                    equipment = newEquipName,
+                    phase = "EXPLORATION"
+                });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteEquipmentAssign: Exception - {ex.Message}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during equipment assignment: {ex.Message}" });
+            }
+        }
+
+        private static string ExecuteEquipmentScrap(MonsterSelectMenu menu)
+        {
+            var equipment = menu.NewEquipmentInstance;
+            if (equipment == null)
+                return JsonHelper.Serialize(new { success = false, error = "No equipment to scrap" });
+
+            var equipName = equipment.Equipment?.GetName() ?? "Unknown";
+            var scrapValue = equipment.Equipment?.GetScrapGoldGain() ?? 0;
+
+            try
+            {
+                // Run UI operations on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Find and select the scrap menu item (it's the last item in the list)
+                    var scrapIndex = menu.MenuList.List.Count - 1;
+                    menu.MenuList.SelectByIndex(scrapIndex);
+
+                    // Trigger the selection via InputConfirm
+                    if (InputConfirmMethod != null)
+                    {
+                        InputConfirmMethod.Invoke(menu.MenuList, null);
+                    }
+                });
+
+                // Wait for the scrap animation and popup
+                System.Threading.Thread.Sleep(300);
+
+                // The game shows a popup after scrapping - we need to close it
+                // Wait for popup and auto-confirm it
+                var startTime = DateTime.Now;
+                while ((DateTime.Now - startTime).TotalMilliseconds < 2000)
+                {
+                    if (PopupController.Instance?.IsOpen ?? false)
+                    {
+                        Plugin.Log.LogInfo("ExecuteEquipmentScrap: Closing scrap confirmation popup");
+                        Plugin.RunOnMainThreadAndWait(() =>
+                        {
+                            PopupController.Instance.Close();
+                        });
+                        break;
+                    }
+                    System.Threading.Thread.Sleep(50);
+                }
+
+                System.Threading.Thread.Sleep(300);
+
+                Plugin.Log.LogInfo($"ExecuteEquipmentScrap: Scrapped {equipName} for {scrapValue} gold");
+                return JsonHelper.Serialize(new
+                {
+                    success = true,
+                    action = "equipment_scrapped",
+                    equipment = equipName,
+                    goldGained = scrapValue,
+                    goldTotal = InventoryManager.Instance?.Gold ?? 0,
+                    phase = "EXPLORATION"
+                });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteEquipmentScrap: Exception - {ex.Message}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during equipment scrap: {ex.Message}" });
+            }
+        }
+
+        // =====================================================
+        // NPC DIALOGUE INTERACTION
+        // =====================================================
+
+        // Cached reflection for DialogueDisplay private fields
+        private static FieldInfo _dialogueDisplayCurrentDialogueField;
+        private static FieldInfo _dialogueDisplayCurrentDataField;
+
+        private static DialogueInteractable GetCurrentDialogueInteractable()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+
+            if (_dialogueDisplayCurrentDialogueField == null)
+            {
+                _dialogueDisplayCurrentDialogueField = typeof(DialogueDisplay).GetField("currentDialogue",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            return _dialogueDisplayCurrentDialogueField?.GetValue(display) as DialogueInteractable;
+        }
+
+        private static DialogueDisplayData GetCurrentDialogueData()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+
+            if (_dialogueDisplayCurrentDataField == null)
+            {
+                _dialogueDisplayCurrentDataField = typeof(DialogueDisplay).GetField("currentDialogueData",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            return _dialogueDisplayCurrentDataField?.GetValue(display) as DialogueDisplayData;
+        }
+
+        public static bool IsDialogueOpen()
+        {
+            return UIController.Instance?.DialogueDisplay?.IsOpen ?? false;
+        }
+
+        /// <summary>
+        /// Checks if the current dialogue state has a meaningful choice that requires user input.
+        /// Returns false if the only meaningful option is "Event" (which should be auto-selected).
+        /// </summary>
+        private static bool HasMeaningfulChoice()
+        {
+            var data = GetCurrentDialogueData();
+            if (data == null) return false;
+
+            // Check if we have dialogue options
+            if (data.DialogueOptions == null || data.DialogueOptions.Length == 0) return false;
+
+            // If there's only one option, no real choice needed
+            if (data.DialogueOptions.Length == 1) return false;
+
+            // Check if "Event" is one of the options - if so, we'll auto-select it
+            int eventIndex = FindEventOptionIndex(data.DialogueOptions);
+            if (eventIndex >= 0)
+            {
+                // Event option exists - this is NOT a meaningful choice, we'll auto-select Event
+                return false;
+            }
+
+            // Choice events with no Event option require user input
+            if (data.IsChoiceEvent) return true;
+
+            // Multiple options (without Event) require user input
+            if (data.DialogueOptions.Length > 1) return true;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Find the index of an "Event" option in the dialogue options.
+        /// Returns -1 if not found.
+        /// </summary>
+        private static int FindEventOptionIndex(string[] options)
+        {
+            if (options == null) return -1;
+
+            for (int i = 0; i < options.Length; i++)
+            {
+                if (options[i] != null && options[i].Trim().Equals("Event", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Auto-progress through dialogue until a meaningful choice appears or dialogue ends.
+        /// Auto-selects "Event" option when available.
+        /// </summary>
+        private static void AutoProgressDialogue(int timeoutMs = 10000)
+        {
+            var startTime = DateTime.Now;
+            var display = UIController.Instance?.DialogueDisplay;
+
+            while (!TimedOut(startTime, timeoutMs))
+            {
+                // Check if dialogue closed
+                if (!IsDialogueOpen())
+                {
+                    Plugin.Log.LogInfo("AutoProgressDialogue: Dialogue closed");
+                    return;
+                }
+
+                // Check if skill selection opened (e.g., Witch dialogue)
+                if (StateSerializer.IsInSkillSelection())
+                {
+                    Plugin.Log.LogInfo("AutoProgressDialogue: Skill selection opened");
+                    return;
+                }
+
+                var data = GetCurrentDialogueData();
+                if (data == null)
+                {
+                    System.Threading.Thread.Sleep(100);
+                    continue;
+                }
+
+                // Check if "Event" is an available option - auto-select it
+                if (data.DialogueOptions != null && data.DialogueOptions.Length > 0)
+                {
+                    int eventIndex = FindEventOptionIndex(data.DialogueOptions);
+                    if (eventIndex >= 0)
+                    {
+                        Plugin.Log.LogInfo($"AutoProgressDialogue: Found 'Event' option at index {eventIndex}, auto-selecting");
+                        SelectDialogueOptionInternal(eventIndex);
+                        System.Threading.Thread.Sleep(300); // Wait for event to process
+                        continue;
+                    }
+                }
+
+                // Stop if we have a meaningful choice (no Event option)
+                if (HasMeaningfulChoice())
+                {
+                    Plugin.Log.LogInfo($"AutoProgressDialogue: Meaningful choice found with {data.DialogueOptions?.Length ?? 0} options");
+                    return;
+                }
+
+                // Auto-advance: simulate confirm (must run on main thread)
+                Plugin.Log.LogInfo($"AutoProgressDialogue: Auto-advancing past '{data.DialogueText?.Substring(0, Math.Min(50, data.DialogueText?.Length ?? 0))}...'");
+                Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
+
+                System.Threading.Thread.Sleep(150); // Wait for UI update
+            }
+
+            Plugin.Log.LogWarning("AutoProgressDialogue: Timeout");
+        }
+
+        /// <summary>
+        /// Internal method to select a dialogue option without returning a result.
+        /// Used for auto-selecting Event options.
+        /// Must run UI operations on main thread.
+        /// </summary>
+        private static void SelectDialogueOptionInternal(int choiceIndex)
+        {
+            var dialogueInteractable = GetCurrentDialogueInteractable();
+            var dialogueData = GetCurrentDialogueData();
+            var display = UIController.Instance?.DialogueDisplay;
+
+            if (dialogueInteractable == null || dialogueData == null || display == null)
+            {
+                Plugin.Log.LogWarning("SelectDialogueOptionInternal: Dialogue state not available");
+                return;
+            }
+
+            var options = dialogueData.DialogueOptions;
+            if (options == null || choiceIndex < 0 || choiceIndex >= options.Length)
+            {
+                Plugin.Log.LogWarning($"SelectDialogueOptionInternal: Invalid choice index {choiceIndex}");
+                return;
+            }
+
+            Plugin.Log.LogInfo($"SelectDialogueOptionInternal: Selecting option {choiceIndex}: '{options[choiceIndex]}'");
+
+            try
+            {
+                // Run UI operations on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Trigger node close events first
+                    dialogueInteractable.TriggerNodeOnCloseEvents();
+
+                    // Select the dialogue option
+                    bool isEnd, forceSkip;
+                    dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
+
+                    Plugin.Log.LogInfo($"SelectDialogueOptionInternal: isEnd={isEnd}, forceSkip={forceSkip}");
+
+                    if (isEnd && forceSkip)
+                    {
+                        // Dialogue is ending - close the UI
+                        Plugin.Log.LogInfo("SelectDialogueOptionInternal: Dialogue ending");
+                        UIController.Instance.SetDialogueVisibility(visible: false);
+                    }
+                    else if (IsDialogueOpen())
+                    {
+                        // Show next dialogue if still open
+                        var nextDialogue = dialogueInteractable.GetNextDialogue();
+                        if (nextDialogue != null)
+                        {
+                            display.ShowDialogue(nextDialogue);
+                        }
+                    }
+                });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"SelectDialogueOptionInternal: Exception - {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Start dialogue with an NPC by index from the map's DialogueInteractables.
+        /// Auto-teleports to NPC and auto-progresses until meaningful choice or dialogue end.
+        /// </summary>
+        public static string ExecuteNpcInteract(int npcIndex)
+        {
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonHelper.Serialize(new { success = false, error = "Cannot interact with NPCs during combat" });
+
+            if (IsDialogueOpen())
+                return JsonHelper.Serialize(new { success = false, error = "Dialogue already open" });
+
+            var map = LevelGenerator.Instance?.Map;
+            if (map == null)
+                return JsonHelper.Serialize(new { success = false, error = "Map not loaded" });
+
+            var interactables = map.DialogueInteractables;
+            if (interactables == null || interactables.Count == 0)
+                return JsonHelper.Serialize(new { success = false, error = "No NPCs on map" });
+
+            if (npcIndex < 0 || npcIndex >= interactables.Count)
+                return JsonHelper.Serialize(new { success = false, error = $"Invalid NPC index: {npcIndex}. Valid range: 0-{interactables.Count - 1}" });
+
+            var interactable = interactables[npcIndex];
+            if (interactable == null)
+                return JsonHelper.Serialize(new { success = false, error = "NPC is null" });
+
+            var npc = interactable as DialogueInteractable;
+            if (npc == null)
+                return JsonHelper.Serialize(new { success = false, error = "Interactable is not a DialogueInteractable" });
+
+            var npcName = npc.DialogueCharacter?.CharacterName ?? "Unknown";
+            Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName} at index {npcIndex}");
+
+            // Run UI/transform operations on main thread
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                // Teleport player near NPC
+                var npcPos = npc.transform.position;
+                var playerMovement = PlayerMovementController.Instance;
+                if (playerMovement != null)
+                {
+                    // Teleport 2 units away in x direction for interaction range
+                    var targetPos = new UnityEngine.Vector3(npcPos.x - 2f, npcPos.y, npcPos.z);
+                    playerMovement.transform.position = targetPos;
+                    Plugin.Log.LogInfo($"ExecuteNpcInteract: Teleported player near NPC at ({targetPos.x:F1}, {targetPos.y:F1})");
+                }
+
+                // Trigger dialogue
+                npc.ForceStart();
+            });
+
+            // Wait for dialogue to open
+            var startTime = DateTime.Now;
+            while (!IsDialogueOpen() && !TimedOut(startTime, 3000))
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+
+            if (!IsDialogueOpen())
+            {
+                return JsonHelper.Serialize(new { success = false, error = "Dialogue failed to open" });
+            }
+
+            // Small delay for dialogue to initialize
+            System.Threading.Thread.Sleep(200);
+
+            // Auto-progress through non-choice dialogue
+            AutoProgressDialogue();
+
+            // Check what state we're in now
+            if (StateSerializer.IsInSkillSelection())
+            {
+                return JsonHelper.Serialize(new
+                {
+                    success = true,
+                    phase = "SKILL_SELECTION",
+                    transitionedFrom = "dialogue",
+                    npc = npcName
+                });
+            }
+
+            if (!IsDialogueOpen())
+            {
+                // Dialogue ended without requiring input
+                return JsonHelper.Serialize(new
+                {
+                    success = true,
+                    phase = "EXPLORATION",
+                    dialogueComplete = true,
+                    npc = npcName
+                });
+            }
+
+            // Return current dialogue state with choices
+            return StateSerializer.GetDialogueStateJson();
+        }
+
+        /// <summary>
+        /// Select a dialogue choice by index and auto-progress until next choice or dialogue end.
+        /// </summary>
+        public static string ExecuteDialogueChoice(int choiceIndex)
+        {
+            if (!IsDialogueOpen())
+                return JsonHelper.Serialize(new { success = false, error = "No dialogue open" });
+
+            var dialogueInteractable = GetCurrentDialogueInteractable();
+            var dialogueData = GetCurrentDialogueData();
+            var display = UIController.Instance?.DialogueDisplay;
+
+            if (dialogueInteractable == null || dialogueData == null || display == null)
+                return JsonHelper.Serialize(new { success = false, error = "Dialogue state not available" });
+
+            var options = dialogueData.DialogueOptions;
+            if (options == null || options.Length == 0)
+                return JsonHelper.Serialize(new { success = false, error = "No dialogue options available" });
+
+            if (choiceIndex < 0 || choiceIndex >= options.Length)
+                return JsonHelper.Serialize(new { success = false, error = $"Invalid choice index: {choiceIndex}. Valid range: 0-{options.Length - 1}" });
+
+            var selectedOptionText = options[choiceIndex];
+            Plugin.Log.LogInfo($"ExecuteDialogueChoice: Selecting option {choiceIndex}: '{selectedOptionText}'");
+
+            try
+            {
+                bool isEnd = false;
+                bool forceSkip = false;
+
+                // Run all UI operations on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Select the option in the UI if possible (wrapped in try-catch for safety)
+                    try
+                    {
+                        var characterDisplay = dialogueData.LeftIsSpeaking
+                            ? display.LeftCharacterDisplay
+                            : display.RightCharacterDisplay;
+
+                        if (characterDisplay != null)
+                        {
+                            if (dialogueData.IsChoiceEvent && characterDisplay.ChoiceEventOptions != null)
+                            {
+                                characterDisplay.ChoiceEventOptions.SelectByIndex(choiceIndex);
+                            }
+                            else if (characterDisplay.DialogOptions != null)
+                            {
+                                characterDisplay.DialogOptions.SelectByIndex(choiceIndex);
+                            }
+                        }
+                    }
+                    catch (System.Exception uiEx)
+                    {
+                        Plugin.Log.LogWarning($"ExecuteDialogueChoice: UI selection failed (non-fatal): {uiEx.Message}");
+                    }
+
+                    // Trigger node close events
+                    dialogueInteractable.TriggerNodeOnCloseEvents();
+
+                    // Select the dialogue option
+                    dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
+
+                    Plugin.Log.LogInfo($"ExecuteDialogueChoice: isEnd={isEnd}, forceSkip={forceSkip}");
+
+                    if (isEnd && forceSkip)
+                    {
+                        // Dialogue is ending
+                        Plugin.Log.LogInfo("ExecuteDialogueChoice: Dialogue ending");
+                        UIController.Instance.SetDialogueVisibility(visible: false);
+                    }
+                    else if (IsDialogueOpen())
+                    {
+                        // Show next dialogue if still open
+                        var nextDialogue = dialogueInteractable.GetNextDialogue();
+                        if (nextDialogue != null)
+                        {
+                            display.ShowDialogue(nextDialogue);
+                        }
+                    }
+                });
+
+                if (isEnd && forceSkip)
+                {
+                    System.Threading.Thread.Sleep(300);
+
+                    // Check what state we transitioned to
+                    if (StateSerializer.IsInEquipmentSelection())
+                    {
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            phase = "EQUIPMENT_SELECTION",
+                            transitionedFrom = "dialogue",
+                            state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
+                        });
+                    }
+
+                    if (StateSerializer.IsInSkillSelection())
+                    {
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            phase = "SKILL_SELECTION",
+                            transitionedFrom = "dialogue"
+                        });
+                    }
+
+                    return JsonHelper.Serialize(new
+                    {
+                        success = true,
+                        phase = "EXPLORATION",
+                        dialogueComplete = true
+                    });
+                }
+
+                System.Threading.Thread.Sleep(200);
+
+                // Auto-progress through non-choice dialogue (including auto-selecting Event if present)
+                AutoProgressDialogue();
+
+                // Return current state after auto-progression
+                if (StateSerializer.IsInEquipmentSelection())
+                {
+                    return JsonHelper.Serialize(new
+                    {
+                        success = true,
+                        phase = "EQUIPMENT_SELECTION",
+                        transitionedFrom = "dialogue",
+                        state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
+                    });
+                }
+
+                if (StateSerializer.IsInSkillSelection())
+                {
+                    return JsonHelper.Serialize(new
+                    {
+                        success = true,
+                        phase = "SKILL_SELECTION",
+                        transitionedFrom = "dialogue"
+                    });
+                }
+
+                if (!IsDialogueOpen())
+                {
+                    return JsonHelper.Serialize(new
+                    {
+                        success = true,
+                        phase = "EXPLORATION",
+                        dialogueComplete = true
+                    });
+                }
+
+                return StateSerializer.GetDialogueStateJson();
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteDialogueChoice: Exception - {ex.Message}\n{ex.StackTrace}");
+                return JsonHelper.Serialize(new
+                {
+                    success = false,
+                    error = $"Exception during dialogue choice: {ex.Message}",
+                    choiceIndex,
+                    optionText = selectedOptionText
+                });
+            }
+        }
+
+        // =====================================================
+        // MERCHANT SHOP INTERACTION
+        // =====================================================
+
+        // Cached reflection for merchant menu access
+        private static FieldInfo _merchantMenuField;
+
+        private static MerchantMenu GetMerchantMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+
+            if (_merchantMenuField == null)
+            {
+                _merchantMenuField = typeof(UIController).GetField("MerchantMenu",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+            }
+            return _merchantMenuField?.GetValue(ui) as MerchantMenu;
+        }
+
+        public static bool IsMerchantMenuOpen()
+        {
+            return GetMerchantMenu()?.IsOpen ?? false;
+        }
+
+        /// <summary>
+        /// Open the merchant shop. Auto-teleports to merchant.
+        /// </summary>
+        public static string ExecuteMerchantInteract()
+        {
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonHelper.Serialize(new { success = false, error = "Cannot shop during combat" });
+
+            if (IsMerchantMenuOpen())
+                return StateSerializer.GetMerchantStateJson();
+
+            var map = LevelGenerator.Instance?.Map;
+            if (map == null)
+                return JsonHelper.Serialize(new { success = false, error = "Map not loaded" });
+
+            var merchantInteractable = map.MerchantInteractable;
+            if (merchantInteractable == null)
+                return JsonHelper.Serialize(new { success = false, error = "No merchant on this map" });
+
+            var merchant = merchantInteractable as MerchantInteractable;
+            if (merchant == null)
+                return JsonHelper.Serialize(new { success = false, error = "Merchant is not a MerchantInteractable" });
+
+            Plugin.Log.LogInfo("ExecuteMerchantInteract: Opening merchant shop");
+
+            // Teleport player near merchant
+            var merchantPos = merchant.transform.position;
+            var playerMovement = PlayerMovementController.Instance;
+            if (playerMovement != null)
+            {
+                var targetPos = new UnityEngine.Vector3(merchantPos.x - 2f, merchantPos.y, merchantPos.z);
+                playerMovement.transform.position = targetPos;
+                Plugin.Log.LogInfo($"ExecuteMerchantInteract: Teleported player near merchant");
+            }
+
+            // Start merchant interaction
+            merchant.StartMerchantInteraction();
+
+            // Wait for menu to open
+            var startTime = DateTime.Now;
+            while (!IsMerchantMenuOpen() && !TimedOut(startTime, 3000))
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+
+            if (!IsMerchantMenuOpen())
+            {
+                return JsonHelper.Serialize(new { success = false, error = "Merchant menu failed to open" });
+            }
+
+            System.Threading.Thread.Sleep(200); // Let UI initialize
+
+            return StateSerializer.GetMerchantStateJson();
+        }
+
+        /// <summary>
+        /// Buy an item from the merchant by index.
+        /// </summary>
+        public static string ExecuteMerchantBuy(int itemIndex, int quantity = 1)
+        {
+            if (!IsMerchantMenuOpen())
+                return JsonHelper.Serialize(new { success = false, error = "Merchant menu not open" });
+
+            var merchant = MerchantInteractable.currentMerchant;
+            if (merchant == null)
+                return JsonHelper.Serialize(new { success = false, error = "No active merchant" });
+
+            var stockedItems = merchant.StockedItems;
+            if (itemIndex < 0 || itemIndex >= stockedItems.Count)
+                return JsonHelper.Serialize(new { success = false, error = $"Invalid item index: {itemIndex}. Valid range: 0-{stockedItems.Count - 1}" });
+
+            var shopItem = stockedItems[itemIndex];
+
+            // Check affordability
+            if (!merchant.CanBuyItem(shopItem, quantity))
+            {
+                return JsonHelper.Serialize(new
+                {
+                    success = false,
+                    error = "Cannot afford this item",
+                    price = shopItem.Price * quantity,
+                    gold = InventoryManager.Instance?.Gold ?? 0
+                });
+            }
+
+            var itemName = shopItem.GetName();
+            var cost = shopItem.Price * quantity;
+
+            Plugin.Log.LogInfo($"ExecuteMerchantBuy: Purchasing {itemName} for {cost} gold");
+
+            // Make the purchase
+            merchant.BuyItem(shopItem, quantity);
+
+            // For EXP purchases, the game opens a post-combat menu to distribute XP
+            // Wait for it to complete
+            if (shopItem.ItemType == ShopItemType.Exp)
+            {
+                Plugin.Log.LogInfo("ExecuteMerchantBuy: EXP purchase - waiting for distribution to complete");
+                var startTime = DateTime.Now;
+
+                // Wait for post-combat menu to open and close
+                while (!TimedOut(startTime, 5000))
+                {
+                    System.Threading.Thread.Sleep(100);
+
+                    // Check if we're back to merchant menu
+                    if (IsMerchantMenuOpen())
+                    {
+                        Plugin.Log.LogInfo("ExecuteMerchantBuy: Back to merchant menu");
+                        break;
+                    }
+                }
+            }
+
+            // For equipment purchases, the game opens equipment selection menu
+            if (shopItem.ItemType == ShopItemType.Equipment)
+            {
+                Plugin.Log.LogInfo("ExecuteMerchantBuy: Equipment purchase - waiting for equipment selection");
+                var startTime = DateTime.Now;
+
+                // Wait for equipment selection menu to open
+                while (!TimedOut(startTime, 3000))
+                {
+                    System.Threading.Thread.Sleep(100);
+
+                    if (StateSerializer.IsInEquipmentSelection())
+                    {
+                        Plugin.Log.LogInfo("ExecuteMerchantBuy: Equipment selection menu opened");
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            purchased = itemName,
+                            cost = cost,
+                            goldRemaining = InventoryManager.Instance?.Gold ?? 0,
+                            phase = "EQUIPMENT_SELECTION",
+                            note = "Use /choice to assign equipment to a monster or scrap",
+                            state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
+                        });
+                    }
+                }
+            }
+
+            System.Threading.Thread.Sleep(200); // Let UI update
+
+            return JsonHelper.Serialize(new
+            {
+                success = true,
+                purchased = itemName,
+                cost = cost,
+                goldRemaining = InventoryManager.Instance?.Gold ?? 0,
+                state = JObject.Parse(StateSerializer.GetMerchantStateJson())
+            });
+        }
+
+        /// <summary>
+        /// Close the merchant menu.
+        /// </summary>
+        public static string ExecuteMerchantClose()
+        {
+            if (!IsMerchantMenuOpen())
+                return JsonHelper.Serialize(new { success = false, error = "Merchant menu not open" });
+
+            Plugin.Log.LogInfo("ExecuteMerchantClose: Closing merchant menu");
+
+            UIController.Instance.SetMerchantMenuVisibility(visible: false);
+
+            // Wait for menu to close
+            var startTime = DateTime.Now;
+            while (IsMerchantMenuOpen() && !TimedOut(startTime, 2000))
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+
+            System.Threading.Thread.Sleep(200);
+
+            return JsonHelper.Serialize(new
+            {
+                success = true,
+                phase = "EXPLORATION"
+            });
+        }
+
+        // =====================================================
+        // RUN START AND DIFFICULTY SELECTION
+        // =====================================================
+
+        /// <summary>
+        /// Start a new run from Pilgrim's Rest. Opens difficulty selection if unlocked,
+        /// otherwise proceeds directly to monster selection.
+        /// </summary>
+        public static string ExecuteStartRun()
+        {
+            // Validate we're in exploration mode
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonHelper.Serialize(new { success = false, error = "Cannot start run during combat" });
+
+            // Check if we're in Pilgrim's Rest
+            var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
+            if (currentArea != EArea.PilgrimsRest)
+                return JsonHelper.Serialize(new { success = false, error = $"Must be in Pilgrim's Rest to start run. Current area: {currentArea}" });
+
+            // Find the start run interactable
+            var startRunInteractable = StateSerializer.FindStartRunInteractable();
+            if (startRunInteractable == null)
+                return JsonHelper.Serialize(new { success = false, error = "Start run interactable not found in Pilgrim's Rest" });
+
+            Plugin.Log.LogInfo("ExecuteStartRun: Triggering start run interaction");
+
+            try
+            {
+                // Run on main thread
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Use ForceStartInteraction which handles difficulty check internally
+                    startRunInteractable.ForceStartInteraction();
+                });
+
+                // Wait for state transition
+                var startTime = DateTime.Now;
+                while (!TimedOut(startTime, 5000))
+                {
+                    System.Threading.Thread.Sleep(100);
+
+                    // Check if difficulty selection opened
+                    if (StateSerializer.IsInDifficultySelection())
+                    {
+                        Plugin.Log.LogInfo("ExecuteStartRun: Difficulty selection opened");
+                        return StateSerializer.GetDifficultySelectionStateJson();
+                    }
+
+                    // Check if monster selection opened (no difficulty selection needed)
+                    if (StateSerializer.IsInMonsterSelection())
+                    {
+                        Plugin.Log.LogInfo("ExecuteStartRun: Monster selection opened (difficulties not unlocked)");
+                        return StateSerializer.GetMonsterSelectionStateJson();
+                    }
+                }
+
+                return JsonHelper.Serialize(new { success = false, error = "Timeout waiting for run start menu to open" });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteStartRun: Exception - {ex.Message}\n{ex.StackTrace}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during run start: {ex.Message}" });
+            }
+        }
+
+        /// <summary>
+        /// Select a difficulty level during run start. Valid values: "Normal", "Heroic", "Mythic"
+        /// </summary>
+        public static string ExecuteSelectDifficulty(string difficulty)
+        {
+            if (!StateSerializer.IsInDifficultySelection())
+                return JsonHelper.Serialize(new { success = false, error = "Not in difficulty selection screen" });
+
+            var menu = UIController.Instance?.DifficultySelectMenu;
+            if (menu == null || !menu.IsOpen)
+                return JsonHelper.Serialize(new { success = false, error = "Difficulty selection menu not available" });
+
+            // Parse difficulty
+            EDifficulty targetDifficulty;
+            switch (difficulty?.ToLower())
+            {
+                case "normal":
+                    targetDifficulty = EDifficulty.Normal;
+                    break;
+                case "heroic":
+                    targetDifficulty = EDifficulty.Heroic;
+                    break;
+                case "mythic":
+                    targetDifficulty = EDifficulty.Mythic;
+                    break;
+                default:
+                    return JsonHelper.Serialize(new { success = false, error = $"Invalid difficulty: '{difficulty}'. Valid values: Normal, Heroic, Mythic" });
+            }
+
+            // Check if difficulty is unlocked
+            var maxUnlocked = ProgressManager.Instance?.UnlockedDifficulty ?? 1;
+            if ((int)targetDifficulty > maxUnlocked)
+            {
+                return JsonHelper.Serialize(new
+                {
+                    success = false,
+                    error = $"Difficulty '{difficulty}' is not unlocked. Max unlocked level: {maxUnlocked}"
+                });
+            }
+
+            Plugin.Log.LogInfo($"ExecuteSelectDifficulty: Selecting difficulty {targetDifficulty}");
+
+            try
+            {
+                // Navigate to the correct difficulty and confirm
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Navigate to target difficulty
+                    while (menu.CurrentDifficulty != targetDifficulty)
+                    {
+                        if ((int)menu.CurrentDifficulty < (int)targetDifficulty)
+                            menu.OnGoRight();
+                        else
+                            menu.OnGoLeft();
+                    }
+
+                    // Trigger confirm (opens popup)
+                    menu.OnConfirm();
+                });
+
+                // Wait for popup to appear and confirm it
+                System.Threading.Thread.Sleep(300);
+
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // The popup asks for confirmation - select the confirm button (index 0) and trigger it
+                    var popup = PopupController.Instance;
+                    if (popup?.IsOpen ?? false)
+                    {
+                        Plugin.Log.LogInfo("ExecuteSelectDifficulty: Confirming popup");
+                        // Select the first button (Confirm) and trigger via InputConfirm on the menu
+                        popup.ConfirmMenu.SelectByIndex(0);
+                        if (InputConfirmMethod != null)
+                        {
+                            InputConfirmMethod.Invoke(popup.ConfirmMenu, null);
+                        }
+                    }
+                });
+
+                // Wait for monster selection to open
+                var startTime = DateTime.Now;
+                while (!TimedOut(startTime, 5000))
+                {
+                    System.Threading.Thread.Sleep(100);
+
+                    if (StateSerializer.IsInMonsterSelection())
+                    {
+                        Plugin.Log.LogInfo($"ExecuteSelectDifficulty: Monster selection opened with difficulty {targetDifficulty}");
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            action = "difficulty_selected",
+                            difficulty = targetDifficulty.ToString(),
+                            phase = "MONSTER_SELECTION",
+                            state = JObject.Parse(StateSerializer.GetMonsterSelectionStateJson())
+                        });
+                    }
+                }
+
+                return JsonHelper.Serialize(new { success = false, error = "Timeout waiting for monster selection after difficulty selection" });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteSelectDifficulty: Exception - {ex.Message}\n{ex.StackTrace}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during difficulty selection: {ex.Message}" });
+            }
+        }
+
+        // =====================================================
+        // END OF RUN (VICTORY/DEFEAT SCREEN)
+        // =====================================================
+
+        // Cached reflection for EndOfRunMenu access
+        private static FieldInfo _endOfRunMenuField;
+
+        private static EndOfRunMenu GetEndOfRunMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+
+            if (_endOfRunMenuField == null)
+            {
+                _endOfRunMenuField = typeof(UIController).GetField("EndOfRunMenu",
+                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+            }
+            return _endOfRunMenuField?.GetValue(ui) as EndOfRunMenu;
+        }
+
+        /// <summary>
+        /// Advance past the end-of-run screen (victory or defeat) back to Pilgrim's Rest.
+        /// </summary>
+        public static string ExecuteContinueFromEndOfRun()
+        {
+            if (!StateSerializer.IsInEndOfRunMenu())
+                return JsonHelper.Serialize(new { success = false, error = "Not in end-of-run screen" });
+
+            var menu = GetEndOfRunMenu();
+            if (menu == null || !menu.IsOpen)
+                return JsonHelper.Serialize(new { success = false, error = "End of run menu not available" });
+
+            // Determine if victory or defeat
+            bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
+            string result = isVictory ? "VICTORY" : "DEFEAT";
+
+            Plugin.Log.LogInfo($"ExecuteContinueFromEndOfRun: Closing end-of-run screen ({result})");
+
+            try
+            {
+                // Close the menu
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    menu.Close();
+                });
+
+                // Wait for transition back to Pilgrim's Rest
+                var startTime = DateTime.Now;
+                while (!TimedOut(startTime, 10000))
+                {
+                    System.Threading.Thread.Sleep(200);
+
+                    // Check if we're back in exploration
+                    if (!(GameStateManager.Instance?.IsCombat ?? true) &&
+                        !StateSerializer.IsInEndOfRunMenu() &&
+                        !StateSerializer.IsInPostCombatMenu())
+                    {
+                        // Give scene transition time to complete
+                        System.Threading.Thread.Sleep(1000);
+
+                        Plugin.Log.LogInfo("ExecuteContinueFromEndOfRun: Returned to exploration");
+                        return JsonHelper.Serialize(new
+                        {
+                            success = true,
+                            action = "continue_from_end_of_run",
+                            runResult = result,
+                            phase = "EXPLORATION",
+                            state = JObject.Parse(StateSerializer.ToJson())
+                        });
+                    }
+                }
+
+                return JsonHelper.Serialize(new { success = false, error = "Timeout waiting for return to exploration" });
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogError($"ExecuteContinueFromEndOfRun: Exception - {ex.Message}\n{ex.StackTrace}");
+                return JsonHelper.Serialize(new { success = false, error = $"Exception during continue: {ex.Message}" });
+            }
         }
     }
 }

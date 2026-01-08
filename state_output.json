@@ -1,0 +1,502 @@
+{
+  "phase": "COMBAT",
+  "round": 2,
+  "readyForInput": true,
+  "inputStatus": "Ready",
+  "currentActorIndex": 0,
+  "isPlayerTurn": true,
+  "playerAether": {
+    "fire": 3,
+    "water": 0,
+    "earth": 3,
+    "wind": 4,
+    "neutral": 0,
+    "wild": 0
+  },
+  "enemyAether": {
+    "fire": 3,
+    "water": 2,
+    "earth": 3,
+    "wind": 0,
+    "neutral": 0,
+    "wild": 0
+  },
+  "allies": [
+    {
+      "index": 0,
+      "name": "Cherufe",
+      "hp": 44,
+      "maxHp": 48,
+      "shield": 0,
+      "corruption": 1,
+      "isDead": false,
+      "staggered": false,
+      "buffs": [],
+      "debuffs": [],
+      "traits": [
+        {
+          "name": "Scorched Earth",
+          "description": "{Aura:} Whenever one or more {Burn} stacks are applied to an enemy: Breaks [1] {Poise} on them. <i><color=#74655eff>Triggers up to 5 times per turn.</color></i>",
+          "isSignature": true,
+          "isAura": true
+        },
+        {
+          "name": "Poise Purging",
+          "description": "Whenever this Monster {purges} or {steals} [Aether]: Breaks {1} {Poise} on target enemy. <i><color=#74655eff></color></i>",
+          "isSignature": false,
+          "isAura": false
+        }
+      ],
+      "skills": [
+        {
+          "index": 0,
+          "name": "Basic Attack",
+          "description": "<color=#ff9900ff>2</color> x <color=#ff9900ff>2</color> damage against target enemy.\nGenerates <color=#ff783cff>Fire</color>/<color=#c58c32ff>Earth</color> Aether.",
+          "cost": {
+            "fire": 0,
+            "water": 0,
+            "earth": 0,
+            "wind": 0,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "attack",
+          "subTypes": [
+            "damaging"
+          ]
+        },
+        {
+          "index": 1,
+          "name": "Grapple",
+          "description": "<color=#ff9900ff>2</color> x <color=#ff9900ff>3</color> <color=#c58c32ff>Earth</color> damage against target enemy.\n{Purges} 1 enemy Aether.",
+          "cost": {
+            "fire": 0,
+            "water": 0,
+            "earth": 1,
+            "wind": 0,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "attack",
+          "subTypes": [
+            "damaging"
+          ]
+        },
+        {
+          "index": 2,
+          "name": "Ignite",
+          "description": "<color=#ff9900ff>3</color> x <color=#ff9900ff>3</color> <color=#ff783cff>Fire</color> damage against target enemy.\nApplies <color=#ff9900ff>2</color> {Burn} to target enemy.",
+          "cost": {
+            "fire": 2,
+            "water": 0,
+            "earth": 0,
+            "wind": 0,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "attack",
+          "subTypes": [
+            "debuff",
+            "damaging"
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "name": "Djinn",
+      "hp": 22,
+      "maxHp": 33,
+      "shield": 0,
+      "corruption": 4,
+      "isDead": false,
+      "staggered": false,
+      "buffs": [],
+      "debuffs": [],
+      "traits": [
+        {
+          "name": "Levitation",
+          "description": "{Aura:} For every [9] [Aether] consumed by allies: Applies {Dodge} to this monster. Each [Attack] consumes a {Dodge} stack to gain +[1] [Damage] and {steal} [1] [Aether]. <i><color=#74655eff></color></i>",
+          "isSignature": false,
+          "isAura": true
+        },
+        {
+          "name": "Aggressive Purging",
+          "description": "{Aura:} On every [4] [Attacks] from allies: {Purges} [1] enemy [Aether]. <i><color=#74655eff></color></i>",
+          "isSignature": false,
+          "isAura": true
+        }
+      ],
+      "skills": [
+        {
+          "index": 0,
+          "name": "Basic Attack",
+          "description": "<color=#ff9900ff>2</color> x <color=#ff9900ff>2</color> damage against target enemy.\nGenerates <color=#99ff66ff>Wind</color>/<color=#c58c32ff>Earth</color> Aether.",
+          "cost": {
+            "fire": 0,
+            "water": 0,
+            "earth": 0,
+            "wind": 0,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "attack",
+          "subTypes": [
+            "damaging"
+          ]
+        },
+        {
+          "index": 1,
+          "name": "Three Wishes",
+          "description": "Choose one of three [Wish] Actions that have not been used in this combat yet.",
+          "cost": {
+            "fire": 0,
+            "water": 0,
+            "earth": 0,
+            "wind": 1,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "dedicated_support",
+          "subTypes": []
+        },
+        {
+          "index": 2,
+          "name": "Swipe",
+          "description": "<color=#ff9900ff>2</color> x <color=#ff9900ff>3</color> <color=#99ff66ff>Wind</color>/<color=#c58c32ff>Earth</color> damage against target enemy.\n{Steals} 1 enemy Aether.",
+          "cost": {
+            "fire": 0,
+            "water": 0,
+            "earth": 1,
+            "wind": 1,
+            "neutral": 0,
+            "wild": 0
+          },
+          "canUse": true,
+          "category": "attack",
+          "subTypes": [
+            "damaging"
+          ]
+        }
+      ]
+    }
+  ],
+  "enemies": [
+    {
+      "index": 0,
+      "name": "Ooze",
+      "hp": 25,
+      "maxHp": 38,
+      "shield": 0,
+      "corruption": 0,
+      "isDead": false,
+      "staggered": true,
+      "buffs": [],
+      "debuffs": [],
+      "traits": [
+        {
+          "name": "Putrid Odor",
+          "description": "{On Action}: Applies [2] {Poison} to self. \nWhenever {Poison} triggers on this monster: Enemies also take damage from it. <i><color=#74655eff>Doesn't trigger Retaliate.</color></i>",
+          "isSignature": true,
+          "isAura": false
+        }
+      ],
+      "poise": [
+        {
+          "element": "Earth",
+          "current": 0,
+          "max": 4
+        }
+      ],
+      "intendedAction": {
+        "skill": "Toxic Slash",
+        "target": "Cherufe"
+      }
+    },
+    {
+      "index": 1,
+      "name": "Tatzelwurm",
+      "hp": 25,
+      "maxHp": 25,
+      "shield": 0,
+      "corruption": 0,
+      "isDead": false,
+      "staggered": false,
+      "buffs": [],
+      "debuffs": [],
+      "traits": [
+        {
+          "name": "Primeval Blight",
+          "description": "{On Crit}: Applies {Poison}. \nThis monster gains +[4%] {Crit Chance} for every {Poison} stack on enemies. <i><color=#74655eff></color></i>",
+          "isSignature": true,
+          "isAura": false
+        }
+      ],
+      "poise": [
+        {
+          "element": "Water",
+          "current": 3,
+          "max": 4
+        }
+      ],
+      "intendedAction": {
+        "skill": "Toxic Slash",
+        "target": "Djinn"
+      }
+    },
+    {
+      "index": 2,
+      "name": "Orthrus",
+      "hp": 30,                                                                                           
+      1073     
+      "maxHp": 30,
+      "shield": 0,
+      "corruption": 0,
+      "isDead": false,
+      "staggered": false,
+      "buffs": [],
+      "debuffs": [],
+      "traits": [
+        {
+          "name": "Two Headed",
+          "description": "{On Attack}, if it was this monster’s first {Attack} of the turn: Heals the ally with the lowest health by [5]. If it was this monster’s second {Attack} of the turn: Applies {Power} to self. <i><color=#74655eff></color></i>",
+          "isSignature": true,
+          "isAura": false
+        }
+      ],
+      "poise": [
+        {
+          "element": "Wind",
+          "current": 4,
+          "max": 4
+        }
+      ],
+      "intendedAction": {
+        "skill": "Fire Fang",
+        "target": "Cherufe"
+      }
+    }
+  ],
+  "consumables": [
+    {
+      "index": 0,
+      "name": "Capture Action",
+      "description": "Crafts a Memento of target staggered monster (if it is not already owned).",
+      "currentCharges": 2,
+      "maxCharges": -1,
+      "canUse": true,
+      "targetType": "SingleEnemy"
+    },
+    {
+      "index": 1,
+      "name": "Monster Flask",
+      "description": "Heals target ally for <color=#ff9900ff>20</color>.",
+      "currentCharges": 4,
+      "maxCharges": 4,
+      "canUse": true,
+      "targetType": "SingleAlly"
+    },
+    {
+      "index": 2,
+      "name": "Hexing Harp",
+      "description": "{Purges} 2 enemy Aether.",
+      "currentCharges": 1,
+      "maxCharges": 2,
+      "canUse": true,
+      "targetType": "SingleEnemy"
+    }
+  ],
+  "gold": 39,
+  "artifacts": [
+    {
+      "index": 0,
+      "name": "Capture Action",
+      "description": "Crafts a Memento of target staggered monster (if it is not already owned).",
+      "currentCharges": 2,
+      "maxCharges": -1,
+      "targetType": "SingleEnemy"
+    },
+    {
+      "index": 1,
+      "name": "Monster Flask",
+      "description": "Heals target ally for <color=#ff9900ff>20</color>.",
+      "currentCharges": 4,
+      "maxCharges": 4,
+      "targetType": "SingleAlly"
+    },
+    {
+      "index": 2,
+      "name": "Hexing Harp",
+      "description": "{Purges} 2 enemy Aether.",
+      "currentCharges": 1,
+      "maxCharges": 2,
+      "targetType": "SingleEnemy"
+    }
+  ],
+  "inventory": {
+    "monsterSoulCount": 4,
+    "availableSummons": [
+      {
+        "index": 0,
+        "name": "Jotunn",
+        "id": 273
+      },
+      {
+        "index": 1,
+        "name": "Minokawa",
+        "id": 1042
+      },
+      {
+        "index": 2,
+        "name": "Nixe",
+        "id": 950
+      },
+      {
+        "index": 3,
+        "name": "Ooze",
+        "id": 994
+      },
+      {
+        "index": 4,
+        "name": "Tatzelwurm",
+        "id": 1007
+      },
+      {
+        "index": 5,
+        "name": "Wolpertinger",
+        "id": 297
+      },
+      {
+        "index": 6,
+        "name": "Mandragora",
+        "id": 1017
+      },
+      {
+        "index": 7,
+        "name": "Orthrus",
+        "id": 1010
+      },
+      {
+        "index": 8,
+        "name": "Wyrmling",
+        "id": 1318
+      },
+      {
+        "index": 9,
+        "name": "Cockatrice",
+        "id": 1340
+      },
+      {
+        "index": 10,
+        "name": "Warden",
+        "id": 951
+      },
+      {
+        "index": 11,
+        "name": "Ravager",
+        "id": 428
+      },
+      {
+        "index": 12,
+        "name": "Catzerker",
+        "id": 1633
+      },
+      {
+        "index": 13,
+        "name": "Gargoyle",
+        "id": 1248
+      },
+      {
+        "index": 14,
+        "name": "Nosferatu",
+        "id": 7187
+      },
+      {
+        "index": 15,
+        "name": "Domovoy",
+        "id": 687
+      },
+      {
+        "index": 16,
+        "name": "Mephisto",
+        "id": 1316
+      },
+      {
+        "index": 17,
+        "name": "Shambler",
+        "id": 1317
+      },
+      {
+        "index": 18,
+        "name": "Grimoire",
+        "id": 1276
+      },
+      {
+        "index": 19,
+        "name": "Star Spawn",
+        "id": 1011
+      },
+      {
+        "index": 20,
+        "name": "Dark Elder",
+        "id": 324
+      },
+      {
+        "index": 21,
+        "name": "Naga",
+        "id": 417
+      },
+      {
+        "index": 22,
+        "name": "Sphinx",
+        "id": 278
+      },
+      {
+        "index": 23,
+        "name": "Ammit",
+        "id": 323
+      },
+      {
+        "index": 24,
+        "name": "Medusa",
+        "id": 1525
+      },
+      {
+        "index": 25,
+        "name": "Serket",
+        "id": 1647
+      },
+      {
+        "index": 26,
+        "name": "Hecatoncheires",
+        "id": 1446
+      }
+    ],
+    "artifacts": [
+      {
+        "index": 0,
+        "name": "Capture Action",
+        "currentCharges": 2,
+        "maxCharges": -1
+      },
+      {
+        "index": 1,
+        "name": "Monster Flask",
+        "currentCharges": 4,
+        "maxCharges": 4
+      },
+      {
+        "index": 2,
+        "name": "Hexing Harp",
+        "currentCharges": 1,
+        "maxCharges": 2
+      }
+    ]
+  },
+  "combatResult": null
+}

@@ -1,16 +1,116 @@
 using System.Collections.Generic;
-using System.Text;
 using Newtonsoft.Json.Linq;
 
 namespace AethermancerHarness
 {
+    public class CombatStateSnapshot
+    {
+        public int Round { get; set; }
+        public Dictionary<EElement, int> PlayerAether { get; set; }
+        public Dictionary<EElement, int> EnemyAether { get; set; }
+        public Dictionary<int, int> AllyHp { get; set; }
+        public Dictionary<int, int> EnemyHp { get; set; }
+        public Dictionary<int, Dictionary<string, int>> AllyBuffs { get; set; }
+        public Dictionary<int, Dictionary<string, int>> EnemyBuffs { get; set; }
+
+        public static CombatStateSnapshot Capture()
+        {
+            var cc = CombatController.Instance;
+            if (cc == null) return null;
+
+            var snapshot = new CombatStateSnapshot
+            {
+                Round = cc.Timeline?.CurrentRound ?? 0,
+                PlayerAether = CaptureAether(cc.PlayerAether?.Aether),
+                EnemyAether = CaptureAether(cc.EnemyAether?.Aether),
+                AllyHp = new Dictionary<int, int>(),
+                EnemyHp = new Dictionary<int, int>(),
+                AllyBuffs = new Dictionary<int, Dictionary<string, int>>(),
+                EnemyBuffs = new Dictionary<int, Dictionary<string, int>>()
+            };
+
+            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
+            {
+                snapshot.AllyHp[i] = cc.PlayerMonsters[i].CurrentHealth;
+                snapshot.AllyBuffs[i] = CaptureBuffs(cc.PlayerMonsters[i]);
+            }
+
+            for (int i = 0; i < cc.Enemies.Count; i++)
+            {
+                snapshot.EnemyHp[i] = cc.Enemies[i].CurrentHealth;
+                snapshot.EnemyBuffs[i] = CaptureBuffs(cc.Enemies[i]);
+            }
+
+            return snapshot;
+        }
+
+        private static Dictionary<EElement, int> CaptureAether(Aether a)
+        {
+            if (a == null) return new Dictionary<EElement, int>();
+            return new Dictionary<EElement, int>
+            {
+                { EElement.Fire, a.Fire },
+                { EElement.Water, a.Water },
+                { EElement.Earth, a.Earth },
+                { EElement.Wind, a.Wind },
+                { EElement.Neutral, a.Neutral },
+                { EElement.Wild, a.Wild }
+            };
+        }
+
+        private static Dictionary<string, int> CaptureBuffs(Monster m)
+        {
+            var result = new Dictionary<string, int>();
+            if (m.BuffManager?.Buffs == null) return result;
+
+            foreach (var buff in m.BuffManager.Buffs)
+            {
+                var name = buff.Buff?.Name;
+                if (!string.IsNullOrEmpty(name))
+                    result[name] = buff.Stacks;
+            }
+            return result;
+        }
+    }
+
     public static class StateSerializer
     {
+        private static string StripMarkup(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            var result = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "");
+            return result.Replace("\n", " ").Replace("[", "").Replace("]", "").Trim();
+        }
+
         public static string ToJson()
         {
-            // Check for skill selection state first (post-combat level up)
+            // Check for equipment selection state first (after picking equipment from dialogue/loot)
+            if (IsInEquipmentSelection())
+                return GetEquipmentSelectionStateJson();
+
+            // Check for dialogue state
+            if (IsInDialogue())
+                return GetDialogueStateJson();
+
+            // Check for merchant menu
+            if (IsInMerchantMenu())
+                return GetMerchantStateJson();
+
+            // Check for skill selection state (post-combat level up)
             if (IsInSkillSelection())
                 return GetSkillSelectionStateJson();
+
+            // Check for monster selection state (shrine/starter selection)
+            if (IsInMonsterSelection())
+                return GetMonsterSelectionStateJson();
+
+            // Check for difficulty selection state (before run start)
+            if (IsInDifficultySelection())
+                return GetDifficultySelectionStateJson();
+
+            // Check for end of run menu (victory/defeat screen)
+            if (IsInEndOfRunMenu())
+                return GetEndOfRunStateJson();
 
             if (!(GameStateManager.Instance?.IsCombat ?? false))
                 return GetExplorationStateJson();
@@ -26,6 +126,593 @@ namespace AethermancerHarness
         public static bool IsInPostCombatMenu()
         {
             return UIController.Instance?.PostCombatMenu?.IsOpen ?? false;
+        }
+
+        public static bool IsInDialogue()
+        {
+            return UIController.Instance?.DialogueDisplay?.IsOpen ?? false;
+        }
+
+        public static bool IsInEquipmentSelection()
+        {
+            var menu = UIController.Instance?.MonsterSelectMenu;
+            if (menu == null || !menu.IsOpen) return false;
+            return menu.SelectType == MonsterSelectMenu.ESelectType.EquipmentSelect;
+        }
+
+        public static bool IsInMonsterSelection()
+        {
+            var menu = UIController.Instance?.MonsterShrineMenu;
+            return menu != null && menu.IsOpen;
+        }
+
+        public static bool IsInDifficultySelection()
+        {
+            return UIController.Instance?.DifficultySelectMenu?.IsOpen ?? false;
+        }
+
+        // Cached reflection for EndOfRunMenu access
+        private static System.Reflection.FieldInfo _endOfRunMenuField;
+
+        private static EndOfRunMenu GetEndOfRunMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+
+            if (_endOfRunMenuField == null)
+            {
+                _endOfRunMenuField = typeof(UIController).GetField("EndOfRunMenu",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+            }
+            return _endOfRunMenuField?.GetValue(ui) as EndOfRunMenu;
+        }
+
+        public static bool IsInEndOfRunMenu()
+        {
+            return GetEndOfRunMenu()?.IsOpen ?? false;
+        }
+
+        public static string GetDifficultySelectionStateJson()
+        {
+            var menu = UIController.Instance?.DifficultySelectMenu;
+            if (menu == null || !menu.IsOpen)
+            {
+                return new JObject
+                {
+                    ["phase"] = "DIFFICULTY_SELECTION",
+                    ["error"] = "Difficulty selection menu not available"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var maxUnlocked = ProgressManager.Instance?.UnlockedDifficulty ?? 1;
+            var currentDifficulty = menu.CurrentDifficulty;
+
+            var choices = new JArray();
+            // EDifficulty: Undefined=0, Normal=1, Heroic=2, Mythic=3
+            choices.Add(new JObject
+            {
+                ["index"] = 0,
+                ["name"] = "Normal",
+                ["difficulty"] = "Normal",
+                ["unlocked"] = maxUnlocked >= 1,
+                ["selected"] = currentDifficulty == EDifficulty.Normal
+            });
+            choices.Add(new JObject
+            {
+                ["index"] = 1,
+                ["name"] = "Heroic",
+                ["difficulty"] = "Heroic",
+                ["unlocked"] = maxUnlocked >= 2,
+                ["selected"] = currentDifficulty == EDifficulty.Heroic
+            });
+            choices.Add(new JObject
+            {
+                ["index"] = 2,
+                ["name"] = "Mythic",
+                ["difficulty"] = "Mythic",
+                ["unlocked"] = maxUnlocked >= 3,
+                ["selected"] = currentDifficulty == EDifficulty.Mythic
+            });
+
+            var result = new JObject
+            {
+                ["phase"] = "DIFFICULTY_SELECTION",
+                ["currentDifficulty"] = currentDifficulty.ToString(),
+                ["maxUnlockedDifficulty"] = maxUnlocked,
+                ["choices"] = choices,
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0,
+                ["party"] = BuildDetailedPartyArray()
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        public static string GetEndOfRunStateJson()
+        {
+            var menu = GetEndOfRunMenu();
+            if (menu == null || !menu.IsOpen)
+            {
+                return new JObject
+                {
+                    ["phase"] = "END_OF_RUN",
+                    ["error"] = "End of run menu not available"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            // Determine victory/defeat from the active banner
+            bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
+            bool isDefeat = menu.DefeatBanner?.activeSelf ?? false;
+
+            string resultText = "UNKNOWN";
+            if (isVictory) resultText = "VICTORY";
+            else if (isDefeat) resultText = "DEFEAT";
+
+            var result = new JObject
+            {
+                ["phase"] = "END_OF_RUN",
+                ["result"] = resultText,
+                ["canContinue"] = true,
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        public static string GetMonsterSelectionStateJson()
+        {
+            var menu = UIController.Instance?.MonsterShrineMenu;
+            if (menu == null || !menu.IsOpen)
+            {
+                return new JObject
+                {
+                    ["phase"] = "MONSTER_SELECTION",
+                    ["error"] = "Monster selection menu not available"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var selection = menu.MonsterSelection;
+            var displayedMonsters = menu.DisplayedMonsters;
+
+            if (displayedMonsters == null || displayedMonsters.Count == 0)
+            {
+                return new JObject
+                {
+                    ["phase"] = "MONSTER_SELECTION",
+                    ["error"] = "No monsters available for selection"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            // Map shrine state to string
+            string shrineType;
+            switch (menu.ShrineSelectionState)
+            {
+                case EShrineState.StarterSelection:
+                    shrineType = "starter";
+                    break;
+                case EShrineState.RunStartSelection:
+                    shrineType = "runStart";
+                    break;
+                case EShrineState.NormalShrineSelection:
+                default:
+                    shrineType = "normal";
+                    break;
+            }
+
+            // Build choices array - manually insert random entry at correct position
+            // The game's internal list has random inserted, but menu.DisplayedMonsters doesn't
+            var choices = new JArray();
+            int outputIndex = 0;
+            int monsterIndex = 0;
+
+            // Insert random entry at RandomMonsterPosition if applicable
+            while (monsterIndex < displayedMonsters.Count || (selection.HasRandomMonster && outputIndex == selection.RandomMonsterPosition))
+            {
+                if (selection.HasRandomMonster && outputIndex == selection.RandomMonsterPosition)
+                {
+                    // Insert random entry
+                    choices.Add(new JObject
+                    {
+                        ["index"] = outputIndex,
+                        ["type"] = "random",
+                        ["name"] = "Random Monster"
+                    });
+                    outputIndex++;
+                }
+                else if (monsterIndex < displayedMonsters.Count)
+                {
+                    var monster = displayedMonsters[monsterIndex];
+                    var choiceObj = new JObject
+                    {
+                        ["index"] = outputIndex,
+                        ["type"] = "monster",
+                        ["name"] = monster.Name ?? "Unknown",
+                        ["monsterKind"] = monster.MonsterKind.ToString()
+                    };
+
+                    // Check if shifted variant is available
+                    bool hasShiftedVariant = InventoryManager.Instance?.HasShiftedMementosOfMonster(monster) ?? false;
+                    choiceObj["hasShiftedVariant"] = hasShiftedVariant;
+
+                    // Add full monster details
+                    choiceObj["details"] = BuildShrineMonsterDetails(monster);
+
+                    choices.Add(choiceObj);
+                    outputIndex++;
+                    monsterIndex++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            var result = new JObject
+            {
+                ["phase"] = "MONSTER_SELECTION",
+                ["shrineType"] = shrineType,
+                ["selectedIndex"] = selection.GetSelectedMonsterIndex(),
+                ["currentShift"] = selection.CurrentShift.ToString(),
+                ["choices"] = choices,
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0,
+                ["party"] = BuildDetailedPartyArray()
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        public static string GetEquipmentSelectionStateJson()
+        {
+            var menu = UIController.Instance?.MonsterSelectMenu;
+            if (menu == null || !menu.IsOpen)
+            {
+                return new JObject
+                {
+                    ["phase"] = "EQUIPMENT_SELECTION",
+                    ["error"] = "Equipment selection menu not available"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var heldEquipment = menu.NewEquipmentInstance;
+            if (heldEquipment == null)
+            {
+                return new JObject
+                {
+                    ["phase"] = "EQUIPMENT_SELECTION",
+                    ["error"] = "No equipment being held"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var scrapValue = heldEquipment.Equipment?.GetScrapGoldGain() ?? 0;
+
+            // Build choices array: monsters + scrap option
+            var choices = new JArray();
+            var party = MonsterManager.Instance?.Active;
+            if (party != null)
+            {
+                for (int i = 0; i < party.Count; i++)
+                {
+                    var monster = party[i];
+                    var currentEquip = monster.Equipment?.Equipment;
+
+                    var choiceObj = new JObject
+                    {
+                        ["index"] = i,
+                        ["type"] = "monster",
+                        ["name"] = monster.Name,
+                        ["level"] = monster.Level
+                    };
+
+                    if (currentEquip != null)
+                    {
+                        choiceObj["currentEquipment"] = BuildEquipmentDetails(currentEquip);
+                        choiceObj["willTrade"] = true;
+                    }
+                    else
+                    {
+                        choiceObj["currentEquipment"] = null;
+                        choiceObj["willTrade"] = false;
+                    }
+
+                    choices.Add(choiceObj);
+                }
+            }
+
+            // Add scrap option as last choice
+            choices.Add(new JObject
+            {
+                ["index"] = party?.Count ?? 0,
+                ["type"] = "scrap",
+                ["goldValue"] = scrapValue
+            });
+
+            var result = new JObject
+            {
+                ["phase"] = "EQUIPMENT_SELECTION",
+                ["heldEquipment"] = BuildEquipmentDetails(heldEquipment),
+                ["scrapValue"] = scrapValue,
+                ["choices"] = choices,
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0,
+                ["party"] = BuildDetailedPartyArray()
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        // Cached reflection for merchant menu access
+        private static System.Reflection.FieldInfo _merchantMenuField;
+
+        private static MerchantMenu GetMerchantMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+
+            if (_merchantMenuField == null)
+            {
+                _merchantMenuField = typeof(UIController).GetField("MerchantMenu",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            }
+            return _merchantMenuField?.GetValue(ui) as MerchantMenu;
+        }
+
+        public static bool IsInMerchantMenu()
+        {
+            return GetMerchantMenu()?.IsOpen ?? false;
+        }
+
+        public static string GetMerchantStateJson()
+        {
+            var merchant = MerchantInteractable.currentMerchant;
+            if (merchant == null)
+            {
+                return new JObject
+                {
+                    ["phase"] = "MERCHANT",
+                    ["error"] = "No active merchant"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            var items = new JArray();
+            var stockedItems = merchant.StockedItems;
+
+            for (int i = 0; i < stockedItems.Count; i++)
+            {
+                var item = stockedItems[i];
+                var itemObj = new JObject
+                {
+                    ["index"] = i,
+                    ["name"] = item.GetName(),
+                    ["type"] = item.ItemType.ToString().ToLower(),
+                    ["rarity"] = item.ItemRarity.ToString(),
+                    ["price"] = item.Price,
+                    ["originalPrice"] = item.OriginalPrice,
+                    ["isDiscounted"] = item.IsDiscounted,
+                    ["quantity"] = item.AmountInStock,
+                    ["canAfford"] = merchant.CanBuyItem(item, 1),
+                    ["description"] = StripMarkup(item.GetDescription())
+                };
+                items.Add(itemObj);
+            }
+
+            var result = new JObject
+            {
+                ["phase"] = "MERCHANT",
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0,
+                ["items"] = items,
+                ["party"] = BuildDetailedPartyArray(),
+                ["artifacts"] = BuildArtifactsArray()
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        // Cached reflection fields for dialogue access
+        private static System.Reflection.FieldInfo _currentDialogueField;
+        private static System.Reflection.FieldInfo _currentDialogueDataField;
+
+        private static DialogueInteractable GetCurrentDialogue()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+
+            if (_currentDialogueField == null)
+            {
+                _currentDialogueField = typeof(DialogueDisplay).GetField("currentDialogue",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            }
+            return _currentDialogueField?.GetValue(display) as DialogueInteractable;
+        }
+
+        private static DialogueDisplayData GetCurrentDialogueData()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+
+            if (_currentDialogueDataField == null)
+            {
+                _currentDialogueDataField = typeof(DialogueDisplay).GetField("currentDialogueData",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            }
+            return _currentDialogueDataField?.GetValue(display) as DialogueDisplayData;
+        }
+
+        public static string GetDialogueStateJson()
+        {
+            var dialogueInteractable = GetCurrentDialogue();
+            var dialogueData = GetCurrentDialogueData();
+
+            if (dialogueInteractable == null || dialogueData == null)
+            {
+                return new JObject
+                {
+                    ["phase"] = "DIALOGUE",
+                    ["error"] = "Dialogue data not available"
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            // Get NPC name
+            var npcName = dialogueInteractable.DialogueCharacter?.CharacterName ?? "Unknown";
+
+            // Build choices array
+            var choices = new JArray();
+            var currentOptions = DialogueEventManager.CurrentInteraction?.CurrentOptions;
+
+            for (int i = 0; i < dialogueData.DialogueOptions.Length; i++)
+            {
+                var choiceObj = new JObject
+                {
+                    ["index"] = i,
+                    ["text"] = dialogueData.DialogueOptions[i]
+                };
+
+                // Try to determine choice type from CurrentOptions and add details
+                if (currentOptions != null && i < currentOptions.Count)
+                {
+                    var option = currentOptions[i];
+                    choiceObj["type"] = GetChoiceType(option);
+
+                    // Add equipment details if this is an equipment choice
+                    if (option is EquipmentInstance equipmentInstance)
+                    {
+                        choiceObj["equipment"] = BuildEquipmentDetails(equipmentInstance);
+                    }
+                }
+
+                choices.Add(choiceObj);
+            }
+
+            // Check if go back is possible
+            var canGoBack = dialogueInteractable.IsGoBackPossible(out _);
+
+            var result = new JObject
+            {
+                ["phase"] = "DIALOGUE",
+                ["npc"] = npcName,
+                ["dialogueText"] = dialogueData.DialogueText,
+                ["isChoiceEvent"] = dialogueData.IsChoiceEvent,
+                ["choices"] = choices,
+                ["canGoBack"] = canGoBack,
+                ["gold"] = InventoryManager.Instance?.Gold ?? 0,
+                ["artifacts"] = BuildArtifactsArray(),
+                ["party"] = BuildDetailedPartyArray()
+            };
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static string GetChoiceType(object option)
+        {
+            if (option == null) return "unknown";
+
+            var typeName = option.GetType().Name;
+
+            if (option is ConsumableInstance ci)
+            {
+                if (ci.Consumable?.ConsumableType == EConsumableType.Artifact)
+                    return "artifact";
+                return "consumable";
+            }
+            if (option is Monster) return "monster";
+            if (option is SkillInstance) return "skill";
+            if (option is PassiveInstance) return "trait";
+            if (option is PerkInstance) return "perk";
+            if (option is EquipmentInstance) return "equipment";
+            if (option is EquipmentManager) return "equipment";
+
+            return typeName.ToLower();
+        }
+
+        /// <summary>
+        /// Determines the action category based on game state.
+        /// Attack: deals damage to enemies
+        /// Support: non-damaging free action
+        /// Dedicated Support: non-damaging non-free action
+        /// </summary>
+        private static string GetActionCategory(SkillInstance skill)
+        {
+            if (skill?.Action == null) return "unknown";
+
+            var action = skill.Action;
+
+            // Check if it's a damaging action
+            bool isDamaging = action.IsActionSubType(EActionSubType.DamagingAction);
+
+            if (isDamaging)
+                return "attack";
+
+            // Non-damaging action - check if free or dedicated
+            bool isFreeAction = skill.IsFreeAction();
+
+            return isFreeAction ? "support" : "dedicated_support";
+        }
+
+        /// <summary>
+        /// Gets detailed sub-types for an action (healing, shielding, buff, debuff, summon).
+        /// </summary>
+        private static JArray GetActionSubTypes(SkillInstance skill)
+        {
+            var subTypes = new JArray();
+            if (skill?.Action == null) return subTypes;
+
+            var action = skill.Action;
+
+            if (action.IsActionSubType(EActionSubType.HealingAction))
+                subTypes.Add("healing");
+            if (action.IsActionSubType(EActionSubType.ShieldingAction))
+                subTypes.Add("shielding");
+            if (action.IsActionSubType(EActionSubType.BuffAction))
+                subTypes.Add("buff");
+            if (action.IsActionSubType(EActionSubType.DebuffAction))
+                subTypes.Add("debuff");
+            if (action.IsActionSubType(EActionSubType.SummonAction))
+                subTypes.Add("summon");
+            if (action.IsActionSubType(EActionSubType.DamagingAction))
+                subTypes.Add("damaging");
+
+            return subTypes;
+        }
+
+        private static JObject BuildEquipmentDetails(EquipmentInstance equipment)
+        {
+            if (equipment == null) return null;
+
+            var eq = equipment.Equipment;
+            if (eq == null) return null;
+
+            // Get the formatted name and strip HTML tags for clean API output
+            var cleanName = StripMarkup(eq.GetName() ?? eq.Name ?? "Unknown");
+            var cleanDescription = StripMarkup(eq.GetDescription(equipment) ?? "");
+
+            var details = new JObject
+            {
+                ["name"] = cleanName,
+                ["equipmentType"] = eq.EquipmentType.ToString(),
+                ["rarity"] = eq.EquipmentRarity.ToString(),
+                ["isAura"] = eq.Aura,
+                ["baseDescription"] = cleanDescription
+            };
+
+            // Build affixes array
+            var affixes = new JArray();
+            if (equipment.Affixes != null)
+            {
+                foreach (var affix in equipment.Affixes)
+                {
+                    if (affix?.Perk == null) continue;
+
+                    var affixObj = new JObject
+                    {
+                        ["name"] = StripMarkup(affix.Perk.GetName() ?? ""),
+                        ["shortDescription"] = StripMarkup(affix.GetShortDescription() ?? ""),
+                        ["description"] = StripMarkup(affix.Perk.GetDescription(affix, colorize: false) ?? ""),
+                        ["isRare"] = affix.IsRare,
+                        ["perkType"] = affix.Perk.PerkType.ToString()
+                    };
+                    affixes.Add(affixObj);
+                }
+            }
+            details["affixes"] = affixes;
+
+            return details;
         }
 
         public static string GetSkillSelectionStateJson()
@@ -112,16 +799,18 @@ namespace AethermancerHarness
 
             if (levelUpType == SkillPicker.ELevelUpType.PickSpell && skill.Action != null)
             {
-                obj["description"] = skill.Action.GetDescription(skill) ?? "";
+                obj["description"] = StripMarkup(skill.Action.GetDescription(skill) ?? "");
                 obj["cost"] = BuildAetherObject(skill.GetActionCost());
                 obj["elements"] = new JArray(skill.Action.Elements.ConvertAll(e => e.ToString()));
                 obj["targetType"] = skill.Action.TargetType.ToString();
                 obj["isTrait"] = false;
+                obj["category"] = GetActionCategory(skill);
+                obj["subTypes"] = GetActionSubTypes(skill);
             }
             else
             {
                 var trait = skill.Source as Trait;
-                obj["description"] = trait?.GetDescription(skill as PassiveInstance) ?? "";
+                obj["description"] = StripMarkup(trait?.GetDescription(skill as PassiveInstance) ?? "");
                 obj["isAura"] = trait?.IsAura() ?? false;
                 obj["isTrait"] = true;
             }
@@ -148,16 +837,18 @@ namespace AethermancerHarness
             {
                 skills.Add(new JObject
                 {
-                    ["name"] = skill.Action?.Name ?? "",
-                    ["description"] = skill.Action?.GetDescription(skill) ?? "",
-                    ["cost"] = BuildAetherObject(skill.GetActionCost())
+                    ["name"] = StripMarkup(skill.Action?.Name ?? ""),
+                    ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
+                    ["cost"] = BuildAetherObject(skill.GetActionCost()),
+                    ["category"] = GetActionCategory(skill),
+                    ["subTypes"] = GetActionSubTypes(skill)
                 });
             }
 
             return new JObject
             {
                 ["index"] = index,
-                ["name"] = m.Name,
+                ["name"] = StripMarkup(m.Name),
                 ["level"] = m.Level,
                 ["hp"] = m.CurrentHealth,
                 ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
@@ -173,9 +864,8 @@ namespace AethermancerHarness
 
         public static string ToText()
         {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return GetExplorationStateText();
-            return GetCombatStateText();
+            // Text format not supported - use JSON
+            return "Text format not supported. Use JSON.";
         }
 
         public static string GetValidActionsJson()
@@ -198,9 +888,11 @@ namespace AethermancerHarness
                     actions.Add(new JObject
                     {
                         ["skillIndex"] = skillIdx,
-                        ["name"] = skill.Action?.Name ?? "",
+                        ["name"] = StripMarkup(skill.Action?.Name ?? ""),
                         ["cost"] = BuildAetherObject(skill.GetActionCost()),
-                        ["targets"] = BuildValidTargets(current, skill)
+                        ["targets"] = BuildValidTargets(current, skill),
+                        ["category"] = GetActionCategory(skill),
+                        ["subTypes"] = GetActionSubTypes(skill)
                     });
                 }
                 skillIdx++;
@@ -223,7 +915,7 @@ namespace AethermancerHarness
                     {
                         var e = cc.Enemies[i];
                         if (!e.State.IsDead)
-                            targets.Add(new JObject { ["index"] = i, ["name"] = e.Name });
+                            targets.Add(new JObject { ["index"] = i, ["name"] = StripMarkup(e.Name) });
                     }
                     break;
 
@@ -233,7 +925,7 @@ namespace AethermancerHarness
                     {
                         var m = cc.PlayerMonsters[i];
                         if (!m.State.IsDead)
-                            targets.Add(new JObject { ["index"] = i, ["name"] = m.Name });
+                            targets.Add(new JObject { ["index"] = i, ["name"] = StripMarkup(m.Name) });
                     }
                     break;
 
@@ -286,12 +978,185 @@ namespace AethermancerHarness
             return result.ToString(Newtonsoft.Json.Formatting.None);
         }
 
+        public static string BuildCondensedCombatStateJson(CombatStateSnapshot before)
+        {
+            var cc = CombatController.Instance;
+            var current = cc.CurrentMonster;
+            var currentIdx = current != null ? (current.BelongsToPlayer ? cc.PlayerMonsters.IndexOf(current) : -1) : -1;
+
+            var stateManager = CombatStateManager.Instance;
+            string combatResult = null;
+            if (stateManager?.State?.CurrentState?.ID == CombatStateManager.EState.CombatFinished)
+                combatResult = stateManager.WonEncounter ? "VICTORY" : "DEFEAT";
+
+            var result = new JObject
+            {
+                ["phase"] = "COMBAT",
+                ["playerAether"] = BuildAetherObject(cc.PlayerAether?.Aether),
+                ["currentActorIndex"] = currentIdx,
+                ["isPlayerTurn"] = current?.BelongsToPlayer ?? false,
+                ["readyForInput"] = ActionHandler.IsReadyForInput(),
+                ["combatResult"] = combatResult
+            };
+
+            if (before != null && AetherChanged(before.EnemyAether, cc.EnemyAether?.Aether))
+                result["enemyAether"] = BuildAetherObject(cc.EnemyAether?.Aether);
+
+            var hpChanges = new JObject
+            {
+                ["allies"] = BuildHpChangesArray(before?.AllyHp, cc.PlayerMonsters, true),
+                ["enemies"] = BuildHpChangesArray(before?.EnemyHp, cc.Enemies, false)
+            };
+            result["hpChanges"] = hpChanges;
+
+            var buffChanges = new JObject
+            {
+                ["allies"] = BuildBuffChangesArray(before?.AllyBuffs, cc.PlayerMonsters),
+                ["enemies"] = BuildBuffChangesArray(before?.EnemyBuffs, cc.Enemies)
+            };
+            result["buffChanges"] = buffChanges;
+
+            result["monstersCanAct"] = BuildMonstersCanActArray(cc);
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static bool AetherChanged(Dictionary<EElement, int> before, Aether after)
+        {
+            if (before == null || after == null) return true;
+            return before[EElement.Fire] != after.Fire ||
+                   before[EElement.Water] != after.Water ||
+                   before[EElement.Earth] != after.Earth ||
+                   before[EElement.Wind] != after.Wind ||
+                   before[EElement.Neutral] != after.Neutral ||
+                   before[EElement.Wild] != after.Wild;
+        }
+
+        private static JArray BuildHpChangesArray(Dictionary<int, int> before, List<Monster> monsters, bool isAlly)
+        {
+            var arr = new JArray();
+            if (monsters == null) return arr;
+
+            for (int i = 0; i < monsters.Count; i++)
+            {
+                var m = monsters[i];
+                int currentHp = m.CurrentHealth;
+                int beforeHp = before != null && before.ContainsKey(i) ? before[i] : currentHp;
+
+                if (currentHp != beforeHp)
+                {
+                    var obj = new JObject
+                    {
+                        ["index"] = i,
+                        ["name"] = StripMarkup(m.Name),
+                        ["hp"] = currentHp
+                    };
+                    if (!isAlly)
+                        obj["isDead"] = m.State?.IsDead ?? false;
+                    arr.Add(obj);
+                }
+            }
+            return arr;
+        }
+
+        private static JArray BuildBuffChangesArray(Dictionary<int, Dictionary<string, int>> before, List<Monster> monsters)
+        {
+            var arr = new JArray();
+            if (monsters == null) return arr;
+
+            for (int i = 0; i < monsters.Count; i++)
+            {
+                var m = monsters[i];
+                var beforeBuffs = before != null && before.ContainsKey(i) ? before[i] : new Dictionary<string, int>();
+                var currentBuffs = new Dictionary<string, (int stacks, string type)>();
+
+                if (m.BuffManager?.Buffs != null)
+                {
+                    foreach (var buff in m.BuffManager.Buffs)
+                    {
+                        var name = buff.Buff?.Name;
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            var type = buff.Buff.BuffType == EBuffType.Buff ? "buff" : "debuff";
+                            currentBuffs[name] = (buff.Stacks, type);
+                        }
+                    }
+                }
+
+                var added = new JArray();
+                var removed = new JArray();
+
+                foreach (var kvp in currentBuffs)
+                {
+                    if (!beforeBuffs.ContainsKey(kvp.Key))
+                    {
+                        added.Add(new JObject
+                        {
+                            ["name"] = kvp.Key,
+                            ["stacks"] = kvp.Value.stacks,
+                            ["type"] = kvp.Value.type
+                        });
+                    }
+                    else if (beforeBuffs[kvp.Key] != kvp.Value.stacks)
+                    {
+                        added.Add(new JObject
+                        {
+                            ["name"] = kvp.Key,
+                            ["stacks"] = kvp.Value.stacks,
+                            ["type"] = kvp.Value.type,
+                            ["previousStacks"] = beforeBuffs[kvp.Key]
+                        });
+                    }
+                }
+
+                foreach (var kvp in beforeBuffs)
+                {
+                    if (!currentBuffs.ContainsKey(kvp.Key))
+                    {
+                        removed.Add(new JObject
+                        {
+                            ["name"] = kvp.Key
+                        });
+                    }
+                }
+
+                if (added.Count > 0 || removed.Count > 0)
+                {
+                    arr.Add(new JObject
+                    {
+                        ["index"] = i,
+                        ["name"] = StripMarkup(m.Name),
+                        ["added"] = added,
+                        ["removed"] = removed
+                    });
+                }
+            }
+            return arr;
+        }
+
+        private static JArray BuildMonstersCanActArray(CombatController cc)
+        {
+            var arr = new JArray();
+            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
+            {
+                var m = cc.PlayerMonsters[i];
+                bool canAct = !m.State.IsDead && !(m.Turn?.WasStaggered ?? false);
+                arr.Add(new JObject
+                {
+                    ["index"] = i,
+                    ["name"] = StripMarkup(m.Name),
+                    ["canAct"] = canAct
+                });
+            }
+            return arr;
+        }
+
         private static JObject BuildCombatMonster(Monster m, int index, bool isPlayer)
         {
             var obj = new JObject
             {
                 ["index"] = index,
-                ["name"] = m.Name,
+                ["name"] = StripMarkup(m.Name),
                 ["hp"] = m.CurrentHealth,
                 ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
                 ["shield"] = m.Shield,
@@ -312,10 +1177,12 @@ namespace AethermancerHarness
                     skills.Add(new JObject
                     {
                         ["index"] = skillIdx,
-                        ["name"] = skill.Action?.Name ?? "",
-                        ["description"] = skill.Action?.GetDescription(skill) ?? "",
+                        ["name"] = StripMarkup(skill.Action?.Name ?? ""),
+                        ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                         ["cost"] = BuildAetherObject(skill.GetActionCost()),
-                        ["canUse"] = skill.Action?.CanUseAction(skill) ?? false
+                        ["canUse"] = skill.Action?.CanUseAction(skill) ?? false,
+                        ["category"] = GetActionCategory(skill),
+                        ["subTypes"] = GetActionSubTypes(skill)
                     });
                     skillIdx++;
                 }
@@ -340,10 +1207,10 @@ namespace AethermancerHarness
                 if (m.AI?.PickedActionList != null && m.AI.PickedActionList.Count > 0)
                 {
                     var action = m.AI.PickedActionList[0];
-                    var targetName = (action.Target as Monster)?.Name ?? "unknown";
+                    var targetName = StripMarkup((action.Target as Monster)?.Name ?? "unknown");
                     obj["intendedAction"] = new JObject
                     {
-                        ["skill"] = action.Action?.Action?.Name ?? "",
+                        ["skill"] = StripMarkup(action.Action?.Action?.Name ?? ""),
                         ["target"] = targetName
                     };
                 }
@@ -364,7 +1231,7 @@ namespace AethermancerHarness
             foreach (var buff in m.BuffManager.Buffs)
             {
                 if (buff.Buff?.BuffType == buffType)
-                    arr.Add(new JObject { ["name"] = buff.Buff?.Name ?? "", ["stacks"] = buff.Stacks });
+                    arr.Add(new JObject { ["name"] = StripMarkup(buff.Buff?.Name ?? ""), ["stacks"] = buff.Stacks });
             }
             return arr;
         }
@@ -380,8 +1247,8 @@ namespace AethermancerHarness
                 if (trait.Trait == null) continue;
                 arr.Add(new JObject
                 {
-                    ["name"] = trait.Trait.Name ?? "",
-                    ["description"] = trait.Trait.GetDescription(trait) ?? "",
+                    ["name"] = StripMarkup(trait.Trait.Name ?? ""),
+                    ["description"] = StripMarkup(trait.Trait.GetDescription(trait) ?? ""),
                     ["isSignature"] = trait.Trait.ID == signatureTraitId,
                     ["isAura"] = trait.Trait.IsAura()
                 });
@@ -403,106 +1270,15 @@ namespace AethermancerHarness
             };
         }
 
-        private static string GetCombatStateText()
-        {
-            var cc = CombatController.Instance;
-            var sb = new StringBuilder();
-            var current = cc.CurrentMonster;
-
-            sb.AppendLine($"=== COMBAT Round {cc.Timeline?.CurrentRound ?? 0} | Turn: {current?.Name ?? "???"} ===");
-
-            sb.AppendLine("PLAYER TEAM:");
-            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-            {
-                var m = cc.PlayerMonsters[i];
-                var status = m.State?.IsDead == true ? "DEAD" : (m.Turn?.WasStaggered == true ? "STAGGERED" : "");
-                var shield = m.Shield > 0 ? $" {m.Shield} shield" : "";
-                var buffs = GetBuffsText(m);
-                sb.AppendLine($"  [{i}] {m.Name,-12} {m.CurrentHealth}/{m.Stats?.MaxHealth?.ValueInt ?? 0} HP{shield} {status} {buffs}");
-            }
-
-            sb.AppendLine("ENEMIES:");
-            for (int i = 0; i < cc.Enemies.Count; i++)
-            {
-                var m = cc.Enemies[i];
-                var status = m.State?.IsDead == true ? "DEAD" : (m.Turn?.WasStaggered == true ? "STAGGERED" : "");
-                var poise = GetPoiseText(m);
-                var intent = GetIntentText(m);
-                sb.AppendLine($"  [{i}] {m.Name,-12} {m.CurrentHealth}/{m.Stats?.MaxHealth?.ValueInt ?? 0} HP {poise} {status} {intent}");
-            }
-
-            sb.AppendLine($"AETHER: You{AetherToText(cc.PlayerAether?.Aether)} | Enemy{AetherToText(cc.EnemyAether?.Aether)}");
-
-            if (current?.BelongsToPlayer == true)
-            {
-                sb.AppendLine("SKILLS:");
-                int idx = 0;
-                foreach (var skill in current.SkillManager?.Actions ?? new List<SkillInstance>())
-                {
-                    var canUse = skill.Action?.CanUseAction(skill) ?? false;
-                    var mark = canUse ? "OK" : "X";
-                    var cost = AetherCostToText(skill.GetActionCost());
-                    sb.AppendLine($"  [{idx}] {skill.Action?.Name,-16} ({cost}) [{mark}]");
-                    idx++;
-                }
-            }
-
-            return sb.ToString();
-        }
-
-        private static string GetBuffsText(Monster m)
-        {
-            if (m.BuffManager?.Buffs == null) return "";
-            var buffs = new List<string>();
-            foreach (var buff in m.BuffManager.Buffs)
-            {
-                if (buff.Stacks > 0)
-                    buffs.Add($"{buff.Buff?.Name} x{buff.Stacks}");
-            }
-            return buffs.Count > 0 ? $"[{string.Join(", ", buffs)}]" : "";
-        }
-
-        private static string GetPoiseText(Monster m)
-        {
-            if (m.SkillManager?.Stagger == null) return "";
-            var parts = new List<string>();
-            foreach (var p in m.SkillManager.Stagger)
-                parts.Add($"{p.Element.ToString()[0]}:{p.CurrentPoise}/{p.MaxHits}");
-            return parts.Count > 0 ? $"Poise[{string.Join(" ", parts)}]" : "";
-        }
-
-        private static string GetIntentText(Monster m)
-        {
-            if (m.AI?.PickedActionList == null || m.AI.PickedActionList.Count == 0) return "";
-            var action = m.AI.PickedActionList[0];
-            var targetName = (action.Target as Monster)?.Name ?? "?";
-            return $"-> {action.Action?.Action?.Name} @ {targetName}";
-        }
-
-        private static string AetherToText(Aether a)
-        {
-            if (a == null) return "[?]";
-            return $"[F:{a.Fire} W:{a.Water} E:{a.Earth} Wi:{a.Wind} N:{a.Neutral}]";
-        }
-
-        private static string AetherCostToText(Aether a)
-        {
-            if (a == null) return "free";
-            var parts = new List<string>();
-            if (a.Fire > 0) parts.Add($"F:{a.Fire}");
-            if (a.Water > 0) parts.Add($"W:{a.Water}");
-            if (a.Earth > 0) parts.Add($"E:{a.Earth}");
-            if (a.Wind > 0) parts.Add($"Wi:{a.Wind}");
-            if (a.Neutral > 0) parts.Add($"N:{a.Neutral}");
-            if (a.Wild > 0) parts.Add($"*:{a.Wild}");
-            return parts.Count > 0 ? string.Join(" ", parts) : "free";
-        }
-
         private static string GetExplorationStateJson()
         {
             var playerPos = PlayerMovementController.Instance?.transform?.position ?? UnityEngine.Vector3.zero;
-            var area = ExplorationController.Instance?.CurrentArea.ToString() ?? "Unknown";
+            var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
+            var area = currentArea.ToString();
             var zone = ExplorationController.Instance?.CurrentZone ?? 0;
+
+            // Check if we're in Pilgrim's Rest and can start a run
+            bool canStartRun = currentArea == EArea.PilgrimsRest && FindStartRunInteractable() != null;
 
             var result = new JObject
             {
@@ -510,6 +1286,7 @@ namespace AethermancerHarness
                 ["player"] = new JObject { ["x"] = (double)playerPos.x, ["y"] = (double)playerPos.y, ["z"] = (double)playerPos.z },
                 ["area"] = area,
                 ["zone"] = zone,
+                ["canStartRun"] = canStartRun,
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
                 ["party"] = BuildDetailedPartyArray(),
                 ["artifacts"] = BuildArtifactsArray(),
@@ -519,6 +1296,18 @@ namespace AethermancerHarness
             };
 
             return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        public static NextAreaInteractable FindStartRunInteractable()
+        {
+            // Find NextAreaInteractable with StartRun headliner
+            var interactables = UnityEngine.Object.FindObjectsOfType<NextAreaInteractable>();
+            foreach (var interactable in interactables)
+            {
+                if (interactable.HeadlinerText == NextAreaInteractable.Headliner.StartRun)
+                    return interactable;
+            }
+            return null;
         }
 
         private static JArray BuildMonsterGroupsArray()
@@ -610,15 +1399,23 @@ namespace AethermancerHarness
                 });
             }
 
-            foreach (var npc in map.DialogueInteractables)
+            int npcIndex = 0;
+            foreach (var interactable in map.DialogueInteractables)
             {
+                if (interactable == null) continue;
+                var npc = interactable as DialogueInteractable;
                 if (npc == null) continue;
                 var pos = npc.transform.position;
+                var npcName = npc.DialogueCharacter?.CharacterName ?? "Unknown";
+                var hasEvent = npc.DialogueCharacter?.EventOptions?.Count > 0;
                 arr.Add(new JObject
                 {
                     ["type"] = "NPC",
+                    ["index"] = npcIndex++,
+                    ["name"] = npcName,
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
-                    ["talked"] = npc.WasUsedUp
+                    ["talked"] = npc.WasUsedUp,
+                    ["hasEvent"] = hasEvent
                 });
             }
 
@@ -649,68 +1446,6 @@ namespace AethermancerHarness
             return arr;
         }
 
-        private static string GetExplorationStateText()
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("=== EXPLORATION ===");
-
-            var playerPos = PlayerMovementController.Instance?.transform?.position ?? UnityEngine.Vector3.zero;
-            sb.AppendLine($"Player: ({playerPos.x:F1}, {playerPos.y:F1}, {playerPos.z:F1})");
-
-            var area = ExplorationController.Instance?.CurrentArea.ToString() ?? "Unknown";
-            var zone = ExplorationController.Instance?.CurrentZone ?? 0;
-            sb.AppendLine($"Area: {area} Zone {zone}");
-
-            var map = LevelGenerator.Instance?.Map;
-            if (map == null)
-            {
-                sb.AppendLine("(Map not loaded)");
-                return sb.ToString();
-            }
-
-            sb.AppendLine("INTERACTABLES:");
-            int idx = 0;
-
-            foreach (var spring in map.AetherSpringInteractables)
-            {
-                if (spring == null) continue;
-                var pos = spring.transform.position;
-                var status = spring.WasUsedUp ? "USED" : "";
-                sb.AppendLine($"  [{idx++}] SPRING     ({pos.x:F0},{pos.y:F0}) {status}");
-            }
-
-            foreach (var mg in map.MonsterGroupInteractables)
-            {
-                if (mg == null) continue;
-                var pos = mg.transform.position;
-                var status = mg.WasUsedUp ? "DEFEATED" : "";
-                sb.AppendLine($"  [{idx++}] MONSTERS   ({pos.x:F0},{pos.y:F0}) {status}");
-            }
-
-            foreach (var chest in map.ChestInteractables)
-            {
-                if (chest == null) continue;
-                var pos = chest.transform.position;
-                var status = chest.WasUsedUp ? "OPENED" : "";
-                sb.AppendLine($"  [{idx++}] CHEST      ({pos.x:F0},{pos.y:F0}) {status}");
-            }
-
-            if (map.MerchantInteractable != null)
-            {
-                var pos = map.MerchantInteractable.transform.position;
-                sb.AppendLine($"  [{idx++}] MERCHANT   ({pos.x:F0},{pos.y:F0})");
-            }
-
-            if (map.MonsterShrine != null)
-            {
-                var pos = map.MonsterShrine.transform.position;
-                var status = map.MonsterShrine.WasUsedUp ? "USED" : "";
-                sb.AppendLine($"  [{idx++}] SHRINE     ({pos.x:F0},{pos.y:F0}) {status}");
-            }
-
-            return sb.ToString();
-        }
-
         private static JArray BuildConsumablesArray()
         {
             var arr = new JArray();
@@ -727,8 +1462,8 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["index"] = i,
-                    ["name"] = c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown",
-                    ["description"] = c.Action?.GetDescription(c) ?? "",
+                    ["name"] = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
+                    ["description"] = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     ["currentCharges"] = c.Charges,
                     ["maxCharges"] = c.GetMaxCharges(),
                     ["canUse"] = c.Action?.CanUseAction(c) ?? false,
@@ -767,11 +1502,13 @@ namespace AethermancerHarness
                 actions.Add(new JObject
                 {
                     ["index"] = actionIdx,
-                    ["name"] = skill.Action?.Name ?? "",
-                    ["description"] = skill.Action?.GetDescription(skill) ?? "",
+                    ["name"] = StripMarkup(skill.Action?.Name ?? ""),
+                    ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                     ["cost"] = BuildAetherObject(skill.GetActionCost()),
                     ["targetType"] = skill.Action?.TargetType.ToString() ?? "Unknown",
-                    ["elements"] = elements
+                    ["elements"] = elements,
+                    ["category"] = GetActionCategory(skill),
+                    ["subTypes"] = GetActionSubTypes(skill)
                 });
                 actionIdx++;
             }
@@ -779,7 +1516,7 @@ namespace AethermancerHarness
             return new JObject
             {
                 ["index"] = index,
-                ["name"] = m.Name,
+                ["name"] = StripMarkup(m.Name),
                 ["level"] = m.Level,
                 ["hp"] = m.CurrentHealth,
                 ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
@@ -791,6 +1528,59 @@ namespace AethermancerHarness
                 ["worthinessNeeded"] = m.Worthiness?.CurrentRequiredWorthinessTotal ?? 0,
                 ["actions"] = actions,
                 ["traits"] = BuildTraitsArray(m)
+            };
+        }
+
+        private static JObject BuildShrineMonsterDetails(Monster m)
+        {
+            // Build actions array with full details
+            var actions = new JArray();
+            int actionIdx = 0;
+            foreach (var skill in m.SkillManager?.Actions ?? new List<SkillInstance>())
+            {
+                var elements = new JArray();
+                if (skill.Action?.Elements != null)
+                {
+                    foreach (var e in skill.Action.Elements)
+                        elements.Add(e.ToString());
+                }
+
+                actions.Add(new JObject
+                {
+                    ["index"] = actionIdx,
+                    ["name"] = StripMarkup(skill.Action?.Name ?? ""),
+                    ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
+                    ["cost"] = BuildAetherObject(skill.GetActionCost()),
+                    ["targetType"] = skill.Action?.TargetType.ToString() ?? "Unknown",
+                    ["elements"] = elements,
+                    ["category"] = GetActionCategory(skill),
+                    ["subTypes"] = GetActionSubTypes(skill)
+                });
+                actionIdx++;
+            }
+
+            // Get signature trait info
+            var signatureTrait = m.SkillManager?.SignatureTraitInstance;
+            JObject signatureTraitObj = null;
+            if (signatureTrait?.Trait != null)
+            {
+                signatureTraitObj = new JObject
+                {
+                    ["name"] = StripMarkup(signatureTrait.Trait.Name ?? ""),
+                    ["description"] = StripMarkup(signatureTrait.Trait.GetDescription(signatureTrait) ?? ""),
+                    ["isAura"] = signatureTrait.Trait.IsAura()
+                };
+            }
+
+            return new JObject
+            {
+                ["name"] = StripMarkup(m.Name),
+                ["monsterKind"] = m.MonsterKind.ToString(),
+                ["level"] = m.Level,
+                ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
+                ["actions"] = actions,
+                ["traits"] = BuildTraitsArray(m),
+                ["signatureTrait"] = signatureTraitObj
             };
         }
 
@@ -808,8 +1598,8 @@ namespace AethermancerHarness
                 arr.Add(new JObject
                 {
                     ["index"] = i,
-                    ["name"] = c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown",
-                    ["description"] = c.Action?.GetDescription(c) ?? "",
+                    ["name"] = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
+                    ["description"] = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     ["currentCharges"] = c.Charges,
                     ["maxCharges"] = c.GetMaxCharges(),
                     ["targetType"] = (c.Action?.TargetType ?? ETargetType.SelfOrOwner).ToString()
@@ -823,22 +1613,6 @@ namespace AethermancerHarness
         {
             var inventory = InventoryManager.Instance;
 
-            var availableSummons = new JArray();
-            var monsters = inventory?.GetAvailableMonsterSouls(excludeActiveMonsters: true);
-            if (monsters != null)
-            {
-                for (int i = 0; i < monsters.Count; i++)
-                {
-                    var monster = monsters[i];
-                    availableSummons.Add(new JObject
-                    {
-                        ["index"] = i,
-                        ["name"] = monster?.Name ?? "Unknown",
-                        ["id"] = monster?.ID ?? 0
-                    });
-                }
-            }
-
             var artifacts = new JArray();
             var consumables = inventory?.GetAllConsumables();
             if (consumables != null)
@@ -851,7 +1625,7 @@ namespace AethermancerHarness
                     artifacts.Add(new JObject
                     {
                         ["index"] = i,
-                        ["name"] = c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown",
+                        ["name"] = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
                         ["currentCharges"] = c.Charges,
                         ["maxCharges"] = c.GetMaxCharges()
                     });
@@ -861,7 +1635,6 @@ namespace AethermancerHarness
             return new JObject
             {
                 ["monsterSoulCount"] = inventory?.MonsterSouls ?? 0,
-                ["availableSummons"] = availableSummons,
                 ["artifacts"] = artifacts
             };
         }

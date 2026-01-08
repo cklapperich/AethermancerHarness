@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -15,10 +18,77 @@ namespace AethermancerHarness
         private bool _hasLoggedGameReady = false;
         private HarnessServer _server;
 
+        // Main thread dispatcher for running Unity API calls from background threads
+        private static readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
+        private static int _mainThreadId;
+
+        /// <summary>
+        /// Check if we're currently on the main thread.
+        /// </summary>
+        public static bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
+
+        /// <summary>
+        /// Queue an action to run on the main thread. If already on main thread, runs immediately.
+        /// </summary>
+        public static void RunOnMainThread(Action action)
+        {
+            if (IsMainThread)
+            {
+                action();
+            }
+            else
+            {
+                _mainThreadQueue.Enqueue(action);
+            }
+        }
+
+        /// <summary>
+        /// Queue an action to run on the main thread and wait for it to complete.
+        /// Returns the result via the out parameter.
+        /// </summary>
+        public static void RunOnMainThreadAndWait(Action action, int timeoutMs = 10000)
+        {
+            if (IsMainThread)
+            {
+                action();
+                return;
+            }
+
+            var completedEvent = new ManualResetEventSlim(false);
+            Exception caughtException = null;
+
+            _mainThreadQueue.Enqueue(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    caughtException = ex;
+                }
+                finally
+                {
+                    completedEvent.Set();
+                }
+            });
+
+            if (!completedEvent.Wait(timeoutMs))
+            {
+                throw new TimeoutException("Timed out waiting for main thread action to complete");
+            }
+
+            if (caughtException != null)
+            {
+                throw new Exception("Exception on main thread: " + caughtException.Message, caughtException);
+            }
+        }
+
         private void Awake()
         {
             Log = Logger;
-            Logger.LogInfo($"AethermancerHarness v{PluginInfo.PLUGIN_VERSION} loaded!");
+            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            Logger.LogInfo($"AethermancerHarness v{PluginInfo.PLUGIN_VERSION} loaded! (Main thread ID: {_mainThreadId})");
 
             // Initialize Harmony patches
             Logger.LogInfo("Initializing Harmony patches...");
@@ -42,6 +112,19 @@ namespace AethermancerHarness
 
         private void Update()
         {
+            // Process main thread queue
+            while (_mainThreadQueue.TryDequeue(out var action))
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception e)
+                {
+                    Logger.LogError($"Error executing main thread action: {e}");
+                }
+            }
+
             // Check if game systems are ready
             if (!_hasLoggedGameReady && GameController.Instance != null)
             {

@@ -83,6 +83,12 @@ Actions are active Skills utilized by monsters during combat. Apart from a monst
 - Because Starting Actions lack a Type, they do not appear in the pool when learning new Actions
 - They can be temporarily replaced during a run by Lily or when at the 4-Action cap
 
+**API Action Categories:**
+The API classifies actions into three categories for strategic planning:
+- **Attack**: Actions that deal damage to enemies
+- **Support**: Non-damaging free actions (don't end your turn)
+- **Dedicated Support**: Non-damaging actions that end your turn (healing, shielding, buffing)
+
 ### Effects Classified as Actions
 
 While Actions usually refer to the Skills that the player actively selects during battle, some other effects are also classified as Actions. **This classification is important for effects that trigger "On Action".**

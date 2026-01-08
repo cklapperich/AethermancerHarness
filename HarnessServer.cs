@@ -83,8 +83,11 @@ namespace AethermancerHarness
                         break;
 
                     case "/state":
-                        var format = request.QueryString["format"] ?? "json";
-                        responseBody = HandleState(format);
+                        var format = request.QueryString["format"];
+                        if (format == "text")
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Text format not supported. Use JSON." }), 400);
+                        else
+                            responseBody = StateSerializer.ToJson();
                         break;
 
                     case "/actions":
@@ -137,6 +140,63 @@ namespace AethermancerHarness
                             (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
                         break;
 
+                    case "/npc/interact":
+                        if (method == "POST")
+                            responseBody = HandleNpcInteract(ReadBody(request));
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/choice":
+                    case "/npc/dialogue-choice": // backwards compatibility
+                        if (method == "POST")
+                            responseBody = HandleChoice(ReadBody(request));
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/merchant/interact":
+                        if (method == "POST")
+                            responseBody = ActionHandler.ExecuteMerchantInteract();
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/merchant/buy":
+                        if (method == "POST")
+                            responseBody = HandleMerchantBuy(ReadBody(request));
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/merchant/close":
+                        if (method == "POST")
+                            responseBody = ActionHandler.ExecuteMerchantClose();
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/run/start":
+                        if (method == "POST")
+                            responseBody = ActionHandler.ExecuteStartRun();
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/run/difficulty":
+                        if (method == "POST")
+                            responseBody = HandleSelectDifficulty(ReadBody(request));
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
+                    case "/run/continue":
+                        if (method == "POST")
+                            responseBody = ActionHandler.ExecuteContinueFromEndOfRun();
+                        else
+                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                        break;
+
                     default:
                         responseBody = JsonHelper.Serialize(new
                         {
@@ -145,7 +205,9 @@ namespace AethermancerHarness
                             {
                                 "/health", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
-                                "/exploration/interact", "/skill-select"
+                                "/exploration/interact", "/skill-select", "/npc/interact", "/choice",
+                                "/merchant/interact", "/merchant/buy", "/merchant/close",
+                                "/run/start", "/run/difficulty", "/run/continue"
                             }
                         });
                         statusCode = 404;
@@ -193,13 +255,6 @@ namespace AethermancerHarness
                 readyForInput = ActionHandler.IsReadyForInput(),
                 inputStatus = ActionHandler.GetInputReadyStatus()
             });
-        }
-
-        private string HandleState(string format)
-        {
-            if (format == "text")
-                return JsonHelper.Serialize(new { text = StateSerializer.ToText() });
-            return StateSerializer.ToJson();
         }
 
         private string HandleActions()
@@ -281,6 +336,52 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { error = $"Invalid skillIndex: {skillIndex}. Use 0-2 for skills, -1 for max health." });
 
             return ActionHandler.ExecuteSkillSelection(skillIndex, reroll: false);
+        }
+
+        private string HandleNpcInteract(string body)
+        {
+            var json = JsonHelper.Parse(body);
+            var npcIndex = JsonHelper.Value(json, "npcIndex", -1);
+
+            if (npcIndex < 0)
+                return JsonHelper.Serialize(new { error = "npcIndex is required and must be >= 0" });
+
+            return ActionHandler.ExecuteNpcInteract(npcIndex);
+        }
+
+        private string HandleChoice(string body)
+        {
+            var json = JsonHelper.Parse(body);
+            var choiceIndex = JsonHelper.Value(json, "choiceIndex", -1);
+            var shift = JsonHelper.Value(json, "shift", (string)null); // "normal" or "shifted"
+
+            if (choiceIndex < 0)
+                return JsonHelper.Serialize(new { error = "choiceIndex is required and must be >= 0" });
+
+            return ActionHandler.ExecuteChoice(choiceIndex, shift);
+        }
+
+        private string HandleMerchantBuy(string body)
+        {
+            var json = JsonHelper.Parse(body);
+            var itemIndex = JsonHelper.Value(json, "itemIndex", -1);
+            var quantity = JsonHelper.Value(json, "quantity", 1);
+
+            if (itemIndex < 0)
+                return JsonHelper.Serialize(new { error = "itemIndex is required and must be >= 0" });
+
+            return ActionHandler.ExecuteMerchantBuy(itemIndex, quantity);
+        }
+
+        private string HandleSelectDifficulty(string body)
+        {
+            var json = JsonHelper.Parse(body);
+            var difficulty = JsonHelper.Value(json, "difficulty", (string)null);
+
+            if (string.IsNullOrEmpty(difficulty))
+                return JsonHelper.Serialize(new { error = "difficulty is required (Normal, Heroic, or Mythic)" });
+
+            return ActionHandler.ExecuteSelectDifficulty(difficulty);
         }
     }
 }

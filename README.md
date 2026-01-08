@@ -5,7 +5,7 @@ A BepInEx plugin that exposes an HTTP API for AI agent training in the Aetherman
 ## Status: Working
 
 **Implemented:**
-- [x] Combat state reading (JSON + compact text)
+- [x] Combat state reading (JSON)
 - [x] Combat action execution (skills + consumables)
 - [x] Combat preview (simulate actions without executing)
 - [x] Exploration state reading (player position, interactables, monster groups)
@@ -14,6 +14,7 @@ A BepInEx plugin that exposes an HTTP API for AI agent training in the Aetherman
 - [x] Programmatic combat start with any monster group
 - [x] Void Blitz automation (full animation, bypasses distance checks)
 - [x] Post-combat skill selection
+- [x] Equipment selection (assign to monster or scrap for gold)
 
 **Not Yet Implemented:**
 - [ ] Speed optimization (`Time.timeScale` adjustments)
@@ -40,8 +41,7 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Check if game is ready |
-| GET | `/state` | Get current game state (exploration or combat) |
-| GET | `/state?format=text` | Get state as compact text |
+| GET | `/state` | Get current game state (exploration, combat, dialogue, or skill selection) |
 | GET | `/actions` | Get valid combat actions |
 | POST | `/combat/action` | Execute combat action (skill or consumable) |
 | POST | `/combat/preview` | Preview action effects without executing |
@@ -50,8 +50,43 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | POST | `/exploration/teleport` | Teleport player to coordinates |
 | POST | `/exploration/interact` | Trigger interaction with nearby object |
 | POST | `/skill-select` | Select skill during level-up |
+| POST | `/npc/interact` | Start dialogue with NPC (auto-progresses to choices) |
+| POST | `/choice` | Universal choice handler (dialogue, equipment selection) |
+| POST | `/merchant/interact` | Open merchant shop (auto-teleports) |
+| POST | `/merchant/buy` | Buy item by index |
+| POST | `/merchant/close` | Close merchant menu |
 
 See [CLAUDE_GUIDE.md](CLAUDE_GUIDE.md) for detailed API documentation.
+
+### Action Categories
+
+All actions/skills include a `category` and `subTypes` array to help classify them:
+
+**Categories:**
+- `attack` - Actions that deal damage to enemies
+- `support` - Non-damaging free actions (don't end your turn)
+- `dedicated_support` - Non-damaging actions that end your turn
+
+**Sub-types:**
+- `damaging` - Deals damage
+- `healing` - Heals allies
+- `shielding` - Grants shield
+- `buff` - Applies buffs
+- `debuff` - Applies debuffs
+- `summon` - Summons creatures
+
+**Example action:**
+```json
+{
+  "index": 0,
+  "name": "Fireball",
+  "description": "Deal 50 Fire damage to an enemy.",
+  "cost": {"fire": 2},
+  "canUse": true,
+  "category": "attack",
+  "subTypes": ["damaging", "debuff"]
+}
+```
 
 ### Combat Start Examples
 
@@ -85,6 +120,177 @@ curl -X POST http://localhost:8080/combat/start \
 curl -X POST http://localhost:8080/combat/start \
   -H "Content-Type: application/json" \
   -d '{"monsterGroupIndex": 0}'
+```
+
+### NPC Dialogue Examples
+
+**Get NPCs from `/state`** (in exploration phase):
+```json
+{
+  "phase": "EXPLORATION",
+  "interactables": [
+    {"type": "NPC", "index": 0, "name": "Alioth", "x": 250.0, "y": 200.0, "z": 0, "talked": false, "hasEvent": true},
+    {"type": "NPC", "index": 1, "name": "Lily", "x": 300.0, "y": 150.0, "z": 0, "talked": true, "hasEvent": false}
+  ]
+}
+```
+
+**Start dialogue with NPC** (auto-teleports and auto-progresses):
+```bash
+curl -X POST http://localhost:8080/npc/interact \
+  -H "Content-Type: application/json" \
+  -d '{"npcIndex": 0}'
+```
+
+**Response with choices** (blocks until meaningful choice or dialogue ends):
+```json
+{
+  "phase": "DIALOGUE",
+  "npc": "Alioth",
+  "dialogueText": "Which artifact interests you?",
+  "isChoiceEvent": true,
+  "choices": [
+    {"index": 0, "text": "Purging Harp", "type": "artifact"},
+    {"index": 1, "text": "Shielding Dust", "type": "artifact"}
+  ],
+  "canGoBack": false
+}
+```
+
+**Response with equipment choices** (e.g., Tiberion the Knight):
+```json
+{
+  "phase": "DIALOGUE",
+  "npc": "Tiberion",
+  "dialogueText": "Choose your equipment:",
+  "isChoiceEvent": true,
+  "choices": [
+    {
+      "index": 0,
+      "text": "Iron Sword",
+      "type": "equipment",
+      "equipment": {
+        "name": "Iron Sword - Rare",
+        "equipmentType": "Weapon",
+        "rarity": "Rare",
+        "isAura": false,
+        "baseDescription": "Deal 10% more damage.",
+        "affixes": [
+          {
+            "name": "Crit Chance",
+            "shortDescription": "Crit Chance +15%",
+            "description": "Increases critical hit chance by 15%.",
+            "isRare": false,
+            "perkType": "Common"
+          },
+          {
+            "name": "Life Steal",
+            "shortDescription": "Life Steal +8%",
+            "description": "Heal for 8% of damage dealt.",
+            "isRare": true,
+            "perkType": "Rare"
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "text": "Steel Ring",
+      "type": "equipment",
+      "equipment": {
+        "name": "Steel Ring - Common",
+        "equipmentType": "Accessory",
+        "rarity": "Common",
+        "isAura": false,
+        "baseDescription": "Gain 5 shield at start of combat.",
+        "affixes": []
+      }
+    }
+  ],
+  "canGoBack": false
+}
+```
+
+**Select a dialogue choice:**
+```bash
+curl -X POST http://localhost:8080/choice \
+  -H "Content-Type: application/json" \
+  -d '{"choiceIndex": 0}'
+```
+
+### Equipment Selection Examples
+
+After selecting equipment from dialogue (e.g., Tiberion) or loot, the game enters equipment selection mode. The `/state` endpoint returns:
+
+```json
+{
+  "phase": "EQUIPMENT_SELECTION",
+  "heldEquipment": {
+    "name": "Iron Sword - Rare",
+    "equipmentType": "Weapon",
+    "rarity": "Rare",
+    "baseDescription": "Deal 10% more damage.",
+    "affixes": [...]
+  },
+  "scrapValue": 8,
+  "choices": [
+    {"index": 0, "type": "monster", "name": "Fenrir", "currentEquipment": null, "willTrade": false},
+    {"index": 1, "type": "monster", "name": "Drake", "currentEquipment": {"name": "Old Dagger", ...}, "willTrade": true},
+    {"index": 2, "type": "monster", "name": "Phoenix", "currentEquipment": null, "willTrade": false},
+    {"index": 3, "type": "scrap", "goldValue": 8}
+  ]
+}
+```
+
+**Assign equipment to a monster:**
+```bash
+curl -X POST http://localhost:8080/choice \
+  -H "Content-Type: application/json" \
+  -d '{"choiceIndex": 0}'
+```
+
+**Trade equipment** (if monster already has equipment):
+When assigning to a monster that has equipment, the response shows `phase: EQUIPMENT_SELECTION` again with the traded equipment as `heldEquipment`.
+
+**Scrap equipment for gold:**
+```bash
+curl -X POST http://localhost:8080/choice \
+  -H "Content-Type: application/json" \
+  -d '{"choiceIndex": 3}'
+```
+
+### Merchant Examples
+
+**Open merchant shop:**
+```bash
+curl -X POST http://localhost:8080/merchant/interact
+```
+
+**Response** (phase: MERCHANT):
+```json
+{
+  "phase": "MERCHANT",
+  "gold": 150,
+  "items": [
+    {"index": 0, "name": "Iron Ring", "type": "equipment", "rarity": "Common", "price": 45, "isDiscounted": false, "canAfford": true},
+    {"index": 1, "name": "Monster Soul", "type": "monstersoul", "price": 20, "isDiscounted": true, "canAfford": true},
+    {"index": 2, "name": "Health Potion", "type": "consumable", "price": 15, "canAfford": true}
+  ]
+}
+```
+
+**Buy an item:**
+```bash
+curl -X POST http://localhost:8080/merchant/buy \
+  -H "Content-Type: application/json" \
+  -d '{"itemIndex": 1}'
+```
+
+Note: When buying equipment, the game enters `EQUIPMENT_SELECTION` phase. Use `/choice` to assign to a monster or scrap.
+
+**Close shop:**
+```bash
+curl -X POST http://localhost:8080/merchant/close
 ```
 
 ## Project Structure
