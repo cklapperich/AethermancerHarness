@@ -370,7 +370,14 @@ namespace AethermancerHarness
             // Check if selecting random
             var isRandom = selection.HasRandomMonster && choiceIndex == selection.RandomMonsterPosition;
 
-            // Get monster name - for random, use "Random Monster"; otherwise adjust index to skip random
+            // Calculate adjusted index for displayedMonsters (skip random option position)
+            int adjustedIndex = choiceIndex;
+            if (!isRandom && selection.HasRandomMonster && choiceIndex > selection.RandomMonsterPosition)
+            {
+                adjustedIndex = choiceIndex - 1;
+            }
+
+            // Get monster name - for random, use "Random Monster"; otherwise use adjusted index
             string monsterName;
             Monster selectedMonster = null;
             if (isRandom)
@@ -379,12 +386,6 @@ namespace AethermancerHarness
             }
             else
             {
-                // Adjust index: if random exists and we're after its position, subtract 1
-                int adjustedIndex = choiceIndex;
-                if (selection.HasRandomMonster && choiceIndex > selection.RandomMonsterPosition)
-                {
-                    adjustedIndex = choiceIndex - 1;
-                }
                 selectedMonster = displayedMonsters[adjustedIndex];
                 monsterName = selectedMonster?.Name ?? "Unknown";
             }

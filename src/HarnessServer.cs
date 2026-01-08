@@ -79,7 +79,11 @@ namespace AethermancerHarness
                 switch (path)
                 {
                     case "/health":
-                        responseBody = HandleHealth();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleHealth());
+                            responseBody = result;
+                        }
                         break;
 
                     case "/state":
@@ -87,69 +91,119 @@ namespace AethermancerHarness
                         if (format == "text")
                             (responseBody, statusCode) = (JsonConfig.Error("Text format not supported. Use JSON."), 400);
                         else
-                            responseBody = StateSerializer.ToJson();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = StateSerializer.ToJson());
+                            responseBody = result;
+                        }
                         break;
 
                     case "/actions":
-                        responseBody = HandleActions();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleActions());
+                            responseBody = result;
+                        }
                         break;
 
                     case "/combat/action":
                         if (method == "POST")
-                            responseBody = HandleCombatAction(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleCombatAction(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/preview":
                         if (method == "POST")
-                            responseBody = HandleCombatPreview(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleCombatPreview(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/enemy-actions":
-                        responseBody = ActionHandler.GetEnemyActions();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.GetEnemyActions());
+                            responseBody = result;
+                        }
                         break;
 
                     case "/exploration/teleport":
                         if (method == "POST")
-                            responseBody = HandleTeleport(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleTeleport(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/exploration/interact":
                         if (method == "POST")
-                            responseBody = ActionHandler.ExecuteInteract();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteInteract());
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/exploration/loot-all":
                         if (method == "POST")
-                            responseBody = ActionHandler.ExecuteLootAll();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteLootAll());
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/start":
                         if (method == "POST")
-                            responseBody = HandleCombatStart(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleCombatStart(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/skill-select":
                         if (method == "POST")
-                            responseBody = HandleSkillSelect(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleSkillSelect(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/npc/interact":
                         if (method == "POST")
-                            responseBody = HandleNpcInteract(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleNpcInteract(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
@@ -157,21 +211,34 @@ namespace AethermancerHarness
                     case "/choice":
                     case "/npc/dialogue-choice": // backwards compatibility
                         if (method == "POST")
-                            responseBody = HandleChoice(ReadBody(request));
+                        {
+                            var body = ReadBody(request);
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleChoice(body));
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/merchant/interact":
                         if (method == "POST")
-                            responseBody = ActionHandler.ExecuteMerchantInteract();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteMerchantInteract());
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
                     case "/aether-spring/interact":
                         if (method == "POST")
-                            responseBody = ActionHandler.ExecuteAetherSpringInteract();
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteAetherSpringInteract());
+                            responseBody = result;
+                        }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;

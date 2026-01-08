@@ -162,11 +162,6 @@ namespace AethermancerHarness
                 }
             }
 
-            // Debug key: F11 to dump current state
-            if (Input.GetKeyDown(KeyCode.F11))
-            {
-                DumpCurrentState();
-            }
         }
 
         private void DumpCurrentState()

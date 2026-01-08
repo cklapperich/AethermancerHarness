@@ -16,7 +16,12 @@ namespace AethermancerHarness
 
         public static string Serialize(object obj) => JsonConvert.SerializeObject(obj, Settings);
 
-        public static JObject Parse(string json) => JObject.Parse(json);
+        public static JObject Parse(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return new JObject();
+            return JObject.Parse(json);
+        }
 
         public static T Value<T>(JObject obj, string key, T defaultValue = default)
         {
