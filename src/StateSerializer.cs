@@ -53,7 +53,6 @@ namespace AethermancerHarness
                 { EElement.Water, a.Water },
                 { EElement.Earth, a.Earth },
                 { EElement.Wind, a.Wind },
-                { EElement.Neutral, a.Neutral },
                 { EElement.Wild, a.Wild }
             };
         }
@@ -843,7 +842,6 @@ namespace AethermancerHarness
                 ["readyForInput"] = ActionHandler.IsReadyForInput(),
                 ["inputStatus"] = ActionHandler.GetInputReadyStatus(),
                 ["currentActorIndex"] = currentIdx,
-                ["isPlayerTurn"] = current?.BelongsToPlayer ?? false,
                 ["playerAether"] = BuildAetherObject(cc.PlayerAether?.Aether),
                 ["enemyAether"] = BuildAetherObject(cc.EnemyAether?.Aether),
                 ["allies"] = allies,
@@ -874,7 +872,6 @@ namespace AethermancerHarness
                 ["phase"] = GamePhase.Combat.ToJsonString(),
                 ["playerAether"] = BuildAetherObject(cc.PlayerAether?.Aether),
                 ["currentActorIndex"] = currentIdx,
-                ["isPlayerTurn"] = current?.BelongsToPlayer ?? false,
                 ["readyForInput"] = ActionHandler.IsReadyForInput(),
                 ["combatResult"] = combatResultStr
             };
@@ -908,7 +905,6 @@ namespace AethermancerHarness
                    before[EElement.Water] != after.Water ||
                    before[EElement.Earth] != after.Earth ||
                    before[EElement.Wind] != after.Wind ||
-                   before[EElement.Neutral] != after.Neutral ||
                    before[EElement.Wild] != after.Wild;
         }
 
@@ -1042,7 +1038,6 @@ namespace AethermancerHarness
                 ["shield"] = m.Shield,
                 ["corruption"] = m.Stats?.CurrentCorruption ?? 0,
                 ["isDead"] = m.State?.IsDead ?? false,
-                ["staggered"] = m.Turn?.WasStaggered ?? false,
                 ["buffs"] = BuildBuffsArray(m, EBuffType.Buff),
                 ["debuffs"] = BuildBuffsArray(m, EBuffType.Debuff),
                 ["traits"] = BuildTraitsArray(m)
@@ -1070,6 +1065,8 @@ namespace AethermancerHarness
             }
             else
             {
+                obj["staggered"] = m.Turn?.WasStaggered ?? false;
+
                 // Poise
                 var poise = new JArray();
                 foreach (var p in m.SkillManager?.Stagger ?? new List<StaggerDefine>())
@@ -1145,7 +1142,6 @@ namespace AethermancerHarness
                 ["water"] = aether.Water,
                 ["earth"] = aether.Earth,
                 ["wind"] = aether.Wind,
-                ["neutral"] = aether.Neutral,
                 ["wild"] = aether.Wild
             };
         }
