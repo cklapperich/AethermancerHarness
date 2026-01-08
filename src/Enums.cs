@@ -92,89 +92,27 @@ namespace AethermancerHarness
     public static class EnumExtensions
     {
         /// <summary>
-        /// Converts GamePhase to SCREAMING_SNAKE_CASE string for JSON output.
+        /// Converts PascalCase to SCREAMING_SNAKE_CASE.
         /// </summary>
-        public static string ToJsonString(this GamePhase phase)
+        private static string ToScreamingSnakeCase(string pascalCase)
         {
-            switch (phase)
+            if (string.IsNullOrEmpty(pascalCase)) return pascalCase;
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < pascalCase.Length; i++)
             {
-                case GamePhase.DifficultySelection: return "DIFFICULTY_SELECTION";
-                case GamePhase.MonsterSelection: return "MONSTER_SELECTION";
-                case GamePhase.EquipmentSelection: return "EQUIPMENT_SELECTION";
-                case GamePhase.SkillSelection: return "SKILL_SELECTION";
-                case GamePhase.Combat: return "COMBAT";
-                case GamePhase.Exploration: return "EXPLORATION";
-                case GamePhase.Dialogue: return "DIALOGUE";
-                case GamePhase.Merchant: return "MERCHANT";
-                case GamePhase.EndOfRun: return "END_OF_RUN";
-                case GamePhase.Timeout: return "TIMEOUT";
-                default: return phase.ToString().ToUpper();
+                if (i > 0 && char.IsUpper(pascalCase[i]))
+                    sb.Append('_');
+                sb.Append(char.ToUpper(pascalCase[i]));
             }
+            return sb.ToString();
         }
 
-        /// <summary>
-        /// Converts InteractableType to SCREAMING_SNAKE_CASE string for JSON output.
-        /// </summary>
-        public static string ToJsonString(this InteractableType type)
-        {
-            switch (type)
-            {
-                case InteractableType.AetherSpring: return "AETHER_SPRING";
-                case InteractableType.MonsterGroup: return "MONSTER_GROUP";
-                case InteractableType.Chest: return "CHEST";
-                case InteractableType.Merchant: return "MERCHANT";
-                case InteractableType.MonsterShrine: return "MONSTER_SHRINE";
-                case InteractableType.Npc: return "NPC";
-                case InteractableType.Event: return "EVENT";
-                case InteractableType.SecretRoom: return "SECRET_ROOM";
-                case InteractableType.StartRun: return "START_RUN";
-                default: return type.ToString().ToUpper();
-            }
-        }
-
-        /// <summary>
-        /// Converts InputReadyStatus to PascalCase string for JSON output.
-        /// </summary>
-        public static string ToJsonString(this InputReadyStatus status)
-        {
-            return status.ToString();
-        }
-
-        /// <summary>
-        /// Converts CombatResult to SCREAMING_CASE string for JSON output.
-        /// </summary>
-        public static string ToJsonString(this CombatResult result)
-        {
-            switch (result)
-            {
-                case CombatResult.Victory: return "VICTORY";
-                case CombatResult.Defeat: return "DEFEAT";
-                case CombatResult.Unknown: return "UNKNOWN";
-                default: return result.ToString().ToUpper();
-            }
-        }
-
-        /// <summary>
-        /// Converts ChoiceType to lowercase string for JSON output.
-        /// </summary>
-        public static string ToJsonString(this ChoiceType type)
-        {
-            return type.ToString().ToLower();
-        }
-
-        /// <summary>
-        /// Converts ShrineType to camelCase string for JSON output.
-        /// </summary>
-        public static string ToJsonString(this ShrineType type)
-        {
-            switch (type)
-            {
-                case ShrineType.Starter: return "starter";
-                case ShrineType.RunStart: return "runStart";
-                case ShrineType.Normal: return "normal";
-                default: return type.ToString().ToLower();
-            }
-        }
+        public static string ToJsonString(this GamePhase phase) => ToScreamingSnakeCase(phase.ToString());
+        public static string ToJsonString(this InteractableType type) => ToScreamingSnakeCase(type.ToString());
+        public static string ToJsonString(this InputReadyStatus status) => ToScreamingSnakeCase(status.ToString());
+        public static string ToJsonString(this CombatResult result) => ToScreamingSnakeCase(result.ToString());
+        public static string ToJsonString(this ChoiceType type) => ToScreamingSnakeCase(type.ToString());
+        public static string ToJsonString(this ShrineType type) => ToScreamingSnakeCase(type.ToString());
 
         /// <summary>
         /// Converts EShrineState to ShrineType.
