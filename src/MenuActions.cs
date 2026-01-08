@@ -1,831 +1,14 @@
 using System;
-using System.Collections.Generic;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 
 namespace AethermancerHarness
 {
-    public static class ActionHandler
+    /// <summary>
+    /// Menu-related actions: post-combat, skill selection, choices, dialogue, merchant, difficulty.
+    /// </summary>
+    public static partial class ActionHandler
     {
-        // Flag to toggle condensed state responses
-        public static bool UseCondensedState { get; set; } = true;
-
-        // Cached reflection methods
-        private static readonly MethodInfo GetDescriptionDamageMethod;
-        private static readonly MethodInfo ContinueMethod;
-        private static readonly MethodInfo InputConfirmMethod;
-        private static readonly MethodInfo ConfirmVoidBlitzTargetMethod;
-        private static readonly MethodInfo ConfirmSelectionMethod;
-
-        static ActionHandler()
-        {
-            GetDescriptionDamageMethod = typeof(ActionDamage).GetMethod(
-                "GetDescriptionDamage",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-
-            ContinueMethod = typeof(PostCombatMenu).GetMethod(
-                "Continue",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-
-            InputConfirmMethod = typeof(MenuList).GetMethod(
-                "InputConfirm",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-
-            ConfirmVoidBlitzTargetMethod = typeof(PlayerMovementController).GetMethod(
-                "ConfirmVoidBlitzTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-
-            ConfirmSelectionMethod = typeof(MonsterShrineMenu).GetMethod(
-                "ConfirmSelection",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-        }
-
-        public static bool IsReadyForInput()
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return false;
-
-            var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
-            if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return false;
-
-            var cc = CombatController.Instance;
-            if (cc == null)
-                return false;
-
-            if (cc.CurrentMonster == null || !cc.CurrentMonster.BelongsToPlayer)
-                return false;
-
-            if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return false;
-
-            if (cc.CurrentMonster.State?.ActionInstance != null)
-                return false;
-
-            return true;
-        }
-
-        public static string GetInputReadyStatus()
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return "NotInCombat";
-
-            var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
-            if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return $"CombatEnded:{currentState}";
-
-            var cc = CombatController.Instance;
-            if (cc == null)
-                return "NoCombatController";
-
-            if (cc.CurrentMonster == null)
-                return "NoCurrentMonster";
-            if (!cc.CurrentMonster.BelongsToPlayer)
-                return $"EnemyTurn:{cc.CurrentMonster.Name}";
-            if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return $"TriggersPending:{CombatTimeline.Instance.TriggerStack.Count}";
-            if (cc.CurrentMonster.State?.ActionInstance != null)
-                return $"ActionExecuting:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
-
-            return "Ready";
-        }
-
-        public static bool WaitForReady(int timeoutMs = 30000)
-        {
-            var startTime = DateTime.Now;
-            while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
-            {
-                if (IsReadyForInput())
-                    return true;
-                System.Threading.Thread.Sleep(50);
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Resolve target based on target type. Returns null with error message if invalid.
-        /// </summary>
-        private static (ITargetable target, string error) ResolveTarget(
-            ETargetType targetType, int targetIndex, CombatController cc, Monster actor)
-        {
-            switch (targetType)
-            {
-                case ETargetType.SingleEnemy:
-                    if (targetIndex < 0 || targetIndex >= cc.Enemies.Count)
-                        return (null, $"Invalid target index: {targetIndex}");
-                    return (cc.Enemies[targetIndex], null);
-
-                case ETargetType.AllEnemies:
-                    return (cc.TargetEnemies, null);
-
-                case ETargetType.SingleAlly:
-                    if (targetIndex < 0 || targetIndex >= cc.PlayerMonsters.Count)
-                        return (null, $"Invalid ally target index: {targetIndex}");
-                    return (cc.PlayerMonsters[targetIndex], null);
-
-                case ETargetType.AllAllies:
-                    return (cc.TargetPlayerMonsters, null);
-
-                case ETargetType.SelfOrOwner:
-                    return (actor, null);
-
-                case ETargetType.AllMonsters:
-                    return (cc.TargetAllMonsters, null);
-
-                default:
-                    return (null, $"Unsupported target type: {targetType}");
-            }
-        }
-
-        private static string GetTargetName(ITargetable target)
-        {
-            if (target is Monster m)
-                return m.Name;
-            if (target is MonsterList ml)
-                return $"[{ml.Monsters.Count} targets]";
-            return "unknown";
-        }
-
-        public static string ExecuteCombatAction(int actorIndex, int skillIndex, int targetIndex)
-        {
-            if (!IsReadyForInput())
-            {
-                return JsonHelper.Serialize(new
-                {
-                    success = false,
-                    error = "Game not ready for input",
-                    status = GetInputReadyStatus()
-                });
-            }
-
-            var cc = CombatController.Instance;
-
-            if (actorIndex < 0 || actorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid actor index: {actorIndex}" });
-
-            var actor = cc.PlayerMonsters[actorIndex];
-
-            if (skillIndex < 0 || skillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid skill index: {skillIndex}" });
-
-            var skill = actor.SkillManager.Actions[skillIndex];
-
-            if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Serialize(new { success = false, error = $"Skill cannot be used: {skill.Action.Name}" });
-
-            var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
-            if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
-
-            Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
-            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
-            actor.State.StartAction(skill, target, target);
-
-            return FinishCombatAction(skill.Action.Name, actor.Name, target, snapshot: snapshot);
-        }
-
-        public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
-        {
-            if (!IsReadyForInput())
-            {
-                return JsonHelper.Serialize(new
-                {
-                    success = false,
-                    error = "Game not ready for input",
-                    status = GetInputReadyStatus()
-                });
-            }
-
-            var cc = CombatController.Instance;
-            var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
-
-            if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid consumable index: {consumableIndex}" });
-
-            var consumable = consumables[consumableIndex];
-            var currentMonster = cc.CurrentMonster;
-
-            if (currentMonster == null)
-                return JsonHelper.Serialize(new { success = false, error = "No current monster to use consumable" });
-
-            consumable.Owner = currentMonster;
-
-            if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Serialize(new { success = false, error = $"Consumable cannot be used: {consumable.Consumable?.Name}" });
-
-            var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
-            if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
-
-            Plugin.Log.LogInfo($"Using consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
-            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
-            currentMonster.State.StartAction(consumable, target, target);
-
-            return FinishCombatAction(consumable.Consumable?.Name ?? "", currentMonster.Name, target, isConsumable: true, snapshot: snapshot);
-        }
-
-        private static string FinishCombatAction(string actionName, string actorName, ITargetable target, bool isConsumable = false, CombatStateSnapshot snapshot = null)
-        {
-            bool ready = WaitForReady(30000);
-
-            var stateManager = CombatStateManager.Instance;
-            bool combatEnded = stateManager?.State?.CurrentState?.ID >= CombatStateManager.EState.EndCombatTriggers;
-
-            if (combatEnded && stateManager.WonEncounter)
-            {
-                Plugin.Log.LogInfo("Combat won, starting post-combat auto-advance");
-                return WaitForPostCombatComplete();
-            }
-
-            if (combatEnded && !stateManager.WonEncounter)
-            {
-                Plugin.Log.LogInfo("Combat lost");
-                var result = new JObject
-                {
-                    ["success"] = true,
-                    ["action"] = actionName,
-                    ["combatResult"] = "DEFEAT",
-                    ["state"] = JObject.Parse(StateSerializer.ToJson())
-                };
-                return result.ToString(Newtonsoft.Json.Formatting.None);
-            }
-
-            // Check if round changed - if so, use full state (condensed would include enemy action effects)
-            var currentRound = CombatController.Instance?.Timeline?.CurrentRound ?? 0;
-            bool roundChanged = snapshot != null && snapshot.Round != currentRound;
-            bool useCondensed = snapshot != null && !roundChanged;
-
-            var response = new JObject
-            {
-                ["success"] = true,
-                ["action"] = actionName,
-                ["actor"] = actorName,
-                ["target"] = GetTargetName(target),
-                ["waitedForReady"] = ready,
-                ["state"] = useCondensed
-                    ? JObject.Parse(StateSerializer.BuildCondensedCombatStateJson(snapshot))
-                    : JObject.Parse(StateSerializer.ToJson())
-            };
-            if (useCondensed)
-                response["condensed"] = true;
-            if (roundChanged)
-                response["roundChanged"] = true;
-            if (isConsumable)
-                response["isConsumable"] = true;
-
-            return response.ToString(Newtonsoft.Json.Formatting.None);
-        }
-
-        public static string ExecutePreview(int actorIndex, int skillIndex, int targetIndex)
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
-
-            var cc = CombatController.Instance;
-
-            if (actorIndex < 0 || actorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid actor index: {actorIndex}" });
-
-            var actor = cc.PlayerMonsters[actorIndex];
-
-            if (skillIndex < 0 || skillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid skill index: {skillIndex}" });
-
-            var skill = actor.SkillManager.Actions[skillIndex];
-
-            if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Serialize(new { success = false, error = $"Skill cannot be used: {skill.Action.Name}" });
-
-            var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
-            if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
-
-            Plugin.Log.LogInfo($"Previewing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
-            return ExecutePreviewInternal(cc, actor, skill, target);
-        }
-
-        public static string ExecuteConsumablePreview(int consumableIndex, int targetIndex)
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
-
-            var cc = CombatController.Instance;
-            var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
-
-            if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid consumable index: {consumableIndex}" });
-
-            var consumable = consumables[consumableIndex];
-            var currentMonster = cc.CurrentMonster;
-
-            if (currentMonster == null)
-                return JsonHelper.Serialize(new { success = false, error = "No current monster for preview" });
-
-            consumable.Owner = currentMonster;
-
-            if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Serialize(new { success = false, error = $"Consumable cannot be used: {consumable.Consumable?.Name}" });
-
-            var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
-            if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
-
-            Plugin.Log.LogInfo($"Previewing consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
-            return ExecutePreviewInternal(cc, currentMonster, consumable, target);
-        }
-
-        private static string ExecutePreviewInternal(CombatController cc, Monster actor, SkillInstance actionInstance, ITargetable target)
-        {
-            var currentMonster = cc.CurrentMonster;
-
-            // Store poise values BEFORE preview
-            var poiseBeforePreview = CapturePoiseState(cc);
-
-            // Setup preview state
-            cc.CurrentMonster = actor;
-            cc.StartPreview();
-            CombatVariablesManager.Instance.StartPreview();
-            CombatStateManager.Instance.PreviewActionInstance = actionInstance;
-            CombatStateManager.Instance.PreviewAction = actionInstance.Action;
-            CombatStateManager.Instance.IsPreview = true;
-            CombatStateManager.Instance.IsEnemyPreview = false;
-
-            foreach (var m in cc.AllMonsters)
-                m.InitializePreview();
-            foreach (var s in cc.AllSummons)
-                s.InitializePreview();
-
-            // Handle aether cost
-            if (actionInstance.GetActionCost().TotalCurrentAether > 0)
-            {
-                var finalCost = cc.GetAether(actor).GetFinalAetherCost(actionInstance.GetActionCost());
-                cc.GetAether(actor).ConsumeAether(finalCost, actor, actionInstance);
-            }
-
-            actor.State.StartActionSetup(actionInstance, target);
-            CombatTimeline.Instance.ProgressActionPreview();
-
-            // Collect preview data BEFORE cleanup
-            var previewResults = CollectPreviewData(cc, poiseBeforePreview);
-
-            // Cleanup
-            CombatStateManager.Instance.IsPreview = false;
-            CombatStateManager.Instance.PreviewAction = null;
-            CombatVariablesManager.Instance.ClearPreviews();
-            CombatTimeline.Instance.ClearTriggers();
-            cc.EnemyAether.Aether.ClearPreview();
-            cc.PlayerAether.Aether.ClearPreview();
-            cc.ClearPreview();
-            cc.CurrentMonster = currentMonster;
-            cc.UpdateEnemyAuras();
-            CombatStateManager.Instance.IsEnemyPreview = false;
-
-            foreach (var m in cc.AllMonsters)
-                m.ClearPreview();
-            foreach (var s in cc.AllSummons)
-                s.ClearPreview();
-            foreach (var m in cc.AllMonsters)
-                m.Stats.Calculate(updateHealth: false);
-            foreach (var s in cc.AllSummons)
-                s.Stats.Calculate(updateHealth: false);
-
-            return previewResults;
-        }
-
-        private static Dictionary<int, List<(EElement element, int current, int max)>> CapturePoiseState(CombatController cc)
-        {
-            var result = new Dictionary<int, List<(EElement, int, int)>>();
-            for (int i = 0; i < cc.Enemies.Count; i++)
-            {
-                var enemy = cc.Enemies[i];
-                var poiseList = new List<(EElement, int, int)>();
-                if (enemy.SkillManager?.Stagger != null)
-                {
-                    foreach (var stagger in enemy.SkillManager.Stagger)
-                        poiseList.Add((stagger.Element, stagger.CurrentPoise, stagger.MaxHits));
-                }
-                result[i] = poiseList;
-            }
-            return result;
-        }
-
-        private static string CollectPreviewData(CombatController cc, Dictionary<int, List<(EElement, int, int)>> poiseBeforePreview)
-        {
-            int totalKills = 0, totalBreaks = 0, totalPurgeCancels = 0, totalInterrupts = 0;
-
-            var enemies = new JArray();
-            for (int i = 0; i < cc.Enemies.Count; i++)
-            {
-                var enemy = cc.Enemies[i];
-                bool willKill = enemy.Stats.PreviewHealth.ValueInt <= 0;
-                int breaks = 0, purgeCancels = 0;
-
-                if (enemy.AI?.PickedActionList != null)
-                {
-                    foreach (var picked in enemy.AI.PickedActionList)
-                    {
-                        if (picked.PreviewStaggered) breaks++;
-                        if (picked.PreviewPurged) purgeCancels++;
-                    }
-                }
-
-                if (willKill) totalKills++;
-                totalBreaks += breaks;
-                totalPurgeCancels += purgeCancels;
-                totalInterrupts += (willKill ? (enemy.AI?.PickedActionList?.Count ?? 1) : 0) + breaks + purgeCancels;
-
-                var poiseBefore = poiseBeforePreview.ContainsKey(i) ? poiseBeforePreview[i] : null;
-                enemies.Add(BuildEnemyPreview(enemy, i, willKill, breaks, purgeCancels, poiseBefore));
-            }
-
-            var allies = new JArray();
-            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                allies.Add(BuildMonsterPreview(cc.PlayerMonsters[i], i));
-
-            var result = new JObject
-            {
-                ["success"] = true,
-                ["preview"] = new JObject
-                {
-                    ["enemies"] = enemies,
-                    ["allies"] = allies,
-                    ["interruptSummary"] = new JObject
-                    {
-                        ["kills"] = totalKills,
-                        ["breaks"] = totalBreaks,
-                        ["purgeCancels"] = totalPurgeCancels,
-                        ["totalInterrupts"] = totalInterrupts
-                    }
-                }
-            };
-
-            return result.ToString(Newtonsoft.Json.Formatting.None);
-        }
-
-        private static JObject BuildEnemyPreview(Monster enemy, int index, bool willKill, int breaks, int purgeCancels,
-            List<(EElement element, int current, int max)> poiseBefore)
-        {
-            var obj = BuildMonsterPreview(enemy, index);
-            obj["willKill"] = willKill;
-            obj["willBreak"] = breaks > 0;
-            obj["willPurgeCancel"] = purgeCancels > 0;
-            obj["breaksCount"] = breaks;
-            obj["purgeCancelsCount"] = purgeCancels;
-
-            var poise = new JArray();
-            if (enemy.SkillManager?.Stagger != null && poiseBefore != null)
-            {
-                int poiseIdx = 0;
-                foreach (var stagger in enemy.SkillManager.Stagger)
-                {
-                    int beforeValue = poiseIdx < poiseBefore.Count ? poiseBefore[poiseIdx].current : stagger.MaxHits;
-                    poise.Add(new JObject
-                    {
-                        ["element"] = stagger.Element.ToString(),
-                        ["before"] = beforeValue,
-                        ["after"] = stagger.PreviewPoise,
-                        ["max"] = stagger.MaxHits
-                    });
-                    poiseIdx++;
-                }
-            }
-            obj["poise"] = poise;
-
-            return obj;
-        }
-
-        private static JObject BuildMonsterPreview(Monster monster, int index)
-        {
-            int totalDamage = 0, totalHeal = 0, totalShield = 0, hitCount = 0;
-            bool hasCrit = false;
-            var buffs = new List<string>();
-            var debuffs = new List<string>();
-
-            foreach (var preview in monster.Numbers.PreviewNumbers)
-            {
-                switch (preview.NumberType)
-                {
-                    case EDamageNumberType.Damage:
-                        totalDamage += preview.Number;
-                        hitCount++;
-                        if (preview.IsCritical) hasCrit = true;
-                        break;
-                    case EDamageNumberType.Heal:
-                        totalHeal += preview.Number;
-                        break;
-                    case EDamageNumberType.Shield:
-                        totalShield += preview.Number;
-                        break;
-                    case EDamageNumberType.Buff:
-                        if (!string.IsNullOrEmpty(preview.Text)) buffs.Add(preview.Text);
-                        break;
-                    case EDamageNumberType.Debuff:
-                        if (!string.IsNullOrEmpty(preview.Text)) debuffs.Add(preview.Text);
-                        break;
-                }
-            }
-
-            return new JObject
-            {
-                ["index"] = index,
-                ["name"] = monster.Name,
-                ["damage"] = totalDamage,
-                ["heal"] = totalHeal,
-                ["shield"] = totalShield,
-                ["hits"] = hitCount,
-                ["hasCrit"] = hasCrit,
-                ["currentHp"] = monster.CurrentHealth,
-                ["previewHp"] = monster.Stats.PreviewHealth.ValueInt,
-                ["buffsApplied"] = new JArray(buffs),
-                ["debuffsApplied"] = new JArray(debuffs)
-            };
-        }
-
-        public static string GetEnemyActions()
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
-
-            var cc = CombatController.Instance;
-            var enemies = new JArray();
-
-            for (int e = 0; e < cc.Enemies.Count; e++)
-            {
-                var enemy = cc.Enemies[e];
-                var intentions = new JArray();
-
-                if (enemy.AI?.PickedActionList != null)
-                {
-                    foreach (var picked in enemy.AI.PickedActionList)
-                    {
-                        var intent = new JObject
-                        {
-                            ["skillName"] = picked.Action?.Action?.Name ?? "Unknown",
-                            ["targetName"] = GetTargetName(picked.Target),
-                            ["targetIndex"] = GetTargetIndex(picked.Target, cc),
-                            ["isPurged"] = picked.PreviewPurged,
-                            ["isStaggered"] = picked.PreviewStaggered
-                        };
-
-                        var actionDamage = picked.Action?.Action?.GetComponent<ActionDamage>();
-                        if (actionDamage != null)
-                        {
-                            int dmgPerHit = GetCalculatedDamage(actionDamage, picked.Action);
-                            intent["damagePerHit"] = dmgPerHit;
-                            intent["hitCount"] = actionDamage.HitCount;
-                            intent["totalDamage"] = dmgPerHit * actionDamage.HitCount;
-                        }
-
-                        intentions.Add(intent);
-                    }
-                }
-
-                var skills = new JArray();
-                for (int s = 0; s < enemy.SkillManager.Actions.Count; s++)
-                {
-                    var skill = enemy.SkillManager.Actions[s];
-                    var skillObj = new JObject
-                    {
-                        ["index"] = s,
-                        ["name"] = skill.Action.Name,
-                        ["description"] = skill.Action.GetDescription(skill) ?? "",
-                        ["targetType"] = skill.Action.TargetType.ToString(),
-                        ["elements"] = new JArray(skill.Action.Elements.ConvertAll(el => el.ToString())),
-                        ["canUse"] = skill.Action.CanUseAction(skill)
-                    };
-
-                    var dmg = skill.Action.GetComponent<ActionDamage>();
-                    if (dmg != null)
-                    {
-                        int dmgPerHit = GetCalculatedDamage(dmg, skill);
-                        skillObj["damagePerHit"] = dmgPerHit;
-                        skillObj["hitCount"] = dmg.HitCount;
-                        skillObj["totalDamage"] = dmgPerHit * dmg.HitCount;
-                    }
-                    else
-                    {
-                        skillObj["damagePerHit"] = 0;
-                        skillObj["hitCount"] = 0;
-                        skillObj["totalDamage"] = 0;
-                    }
-
-                    skills.Add(skillObj);
-                }
-
-                enemies.Add(new JObject
-                {
-                    ["index"] = e,
-                    ["name"] = enemy.Name,
-                    ["hp"] = enemy.CurrentHealth,
-                    ["maxHp"] = enemy.Stats.MaxHealth.ValueInt,
-                    ["intentions"] = intentions,
-                    ["skills"] = skills
-                });
-            }
-
-            return new JObject { ["success"] = true, ["enemies"] = enemies }.ToString(Newtonsoft.Json.Formatting.None);
-        }
-
-        private static int GetTargetIndex(ITargetable target, CombatController cc)
-        {
-            if (target is Monster m)
-            {
-                for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                    if (cc.PlayerMonsters[i] == m) return i;
-                for (int i = 0; i < cc.Enemies.Count; i++)
-                    if (cc.Enemies[i] == m) return i;
-            }
-            return -1;
-        }
-
-        private static int GetCalculatedDamage(ActionDamage actionDamage, SkillInstance skill)
-        {
-            if (GetDescriptionDamageMethod == null) return 0;
-            var result = GetDescriptionDamageMethod.Invoke(actionDamage, new object[] { skill });
-            var valueInt = result.GetType().GetProperty("ValueInt").GetValue(result);
-            return (int)valueInt;
-        }
-
-        public static string ExecuteVoidBlitz(int monsterGroupIndex, int monsterIndex = 0)
-        {
-            if (GameStateManager.Instance?.IsCombat ?? true)
-                return JsonHelper.Serialize(new { success = false, error = "Cannot void blitz during combat" });
-
-            if (!GameStateManager.Instance.IsExploring)
-                return JsonHelper.Serialize(new { success = false, error = "Must be in exploration mode to void blitz" });
-
-            var groups = ExplorationController.Instance?.EncounterGroups;
-            if (groups == null || groups.Count == 0)
-                return JsonHelper.Serialize(new { success = false, error = "No monster groups available" });
-
-            if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}" });
-
-            var targetGroup = groups[monsterGroupIndex];
-            if (targetGroup == null)
-                return JsonHelper.Serialize(new { success = false, error = "Monster group is null" });
-
-            if (targetGroup.EncounterDefeated)
-                return JsonHelper.Serialize(new { success = false, error = "Monster group already defeated" });
-
-            if (targetGroup.OverworldMonsters == null || targetGroup.OverworldMonsters.Count == 0)
-                return JsonHelper.Serialize(new { success = false, error = "Monster group has no overworld monsters" });
-
-            // Find target monster
-            OverworldMonster targetMonster = null;
-            if (monsterIndex >= 0 && monsterIndex < targetGroup.OverworldMonsters.Count)
-            {
-                targetMonster = targetGroup.OverworldMonsters[monsterIndex];
-                if (targetMonster == null || !targetMonster.gameObject.activeSelf)
-                    targetMonster = null;
-            }
-
-            if (targetMonster == null)
-            {
-                foreach (var monster in targetGroup.OverworldMonsters)
-                {
-                    if (monster != null && monster.gameObject.activeSelf)
-                    {
-                        targetMonster = monster;
-                        break;
-                    }
-                }
-            }
-
-            if (targetMonster == null)
-                return JsonHelper.Serialize(new { success = false, error = "No active monsters in group" });
-
-            Plugin.Log.LogInfo($"ExecuteVoidBlitz: Targeting group {monsterGroupIndex}, monster {targetMonster.name}");
-
-            // Store monster name before main thread call (can't access Unity objects across threads safely)
-            var targetMonsterName = targetMonster.name;
-
-            // Run void blitz trigger on main thread (UI operations like poise preview require main thread)
-            Plugin.RunOnMainThreadAndWait(() =>
-            {
-                VoidBlitzBypass.IsActive = true;
-                VoidBlitzBypass.TargetGroup = targetGroup;
-                VoidBlitzBypass.TargetMonster = targetMonster;
-
-                PlayerController.Instance.AetherBlitzTargetGroup = targetGroup;
-                PlayerController.Instance.TryToStartAetherBlitz(targetMonster);
-            });
-
-            Plugin.Log.LogInfo("ExecuteVoidBlitz: Void blitz triggered successfully");
-
-            return JsonHelper.Serialize(new
-            {
-                success = true,
-                action = "void_blitz",
-                monsterGroupIndex,
-                targetMonster = targetMonsterName,
-                note = "Animation playing, combat will start shortly"
-            });
-        }
-
-        public static string ExecuteStartCombat(int monsterGroupIndex)
-        {
-            if (GameStateManager.Instance?.IsCombat ?? true)
-                return JsonHelper.Serialize(new { success = false, error = "Already in combat" });
-
-            var groups = ExplorationController.Instance?.EncounterGroups;
-            if (groups == null || groups.Count == 0)
-                return JsonHelper.Serialize(new { success = false, error = "No monster groups available" });
-
-            if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}" });
-
-            var targetGroup = groups[monsterGroupIndex];
-            if (targetGroup == null)
-                return JsonHelper.Serialize(new { success = false, error = "Monster group is null" });
-
-            if (targetGroup.EncounterDefeated)
-                return JsonHelper.Serialize(new { success = false, error = "Monster group already defeated" });
-
-            Plugin.Log.LogInfo($"ExecuteStartCombat: Starting combat with group {monsterGroupIndex}");
-            targetGroup.StartCombat(aetherBlitzed: false, null, ignoreGameState: true);
-
-            return JsonHelper.Serialize(new { success = true, action = "start_combat", monsterGroupIndex });
-        }
-
-        public static string ExecuteTeleport(float x, float y, float z)
-        {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Serialize(new { success = false, error = "Cannot teleport during combat" });
-
-            var playerMovement = PlayerMovementController.Instance;
-            if (playerMovement == null)
-                return JsonHelper.Serialize(new { success = false, error = "PlayerMovementController not available" });
-
-            var oldPos = playerMovement.transform.position;
-            var newPos = new UnityEngine.Vector3(x, y, z);
-            playerMovement.transform.position = newPos;
-
-            Plugin.Log.LogInfo($"Teleported player from ({oldPos.x:F1}, {oldPos.y:F1}, {oldPos.z:F1}) to ({x:F1}, {y:F1}, {z:F1})");
-
-            return JsonHelper.Serialize(new
-            {
-                success = true,
-                from = new { x = (double)oldPos.x, y = (double)oldPos.y, z = (double)oldPos.z },
-                to = new { x = (double)x, y = (double)y, z = (double)z }
-            });
-        }
-
-        public static string ExecuteInteract()
-        {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Serialize(new { success = false, error = "Cannot interact during combat" });
-
-            // Check for monster shrine - teleport and interact regardless of distance
-            var shrine = LevelGenerator.Instance?.Map?.MonsterShrine;
-            if (shrine != null && !shrine.WasUsedUp)
-            {
-                Plugin.Log.LogInfo($"ExecuteInteract: Found unused monster shrine, teleporting and interacting");
-                try
-                {
-                    Plugin.RunOnMainThreadAndWait(() =>
-                    {
-                        // Teleport player near shrine
-                        var shrinePos = shrine.transform.position;
-                        var playerMovement = PlayerMovementController.Instance;
-                        if (playerMovement != null)
-                        {
-                            var targetPos = new UnityEngine.Vector3(shrinePos.x, shrinePos.y - 5f, shrinePos.z);
-                            playerMovement.transform.position = targetPos;
-                            Plugin.Log.LogInfo($"ExecuteInteract: Teleported player to shrine at ({targetPos.x:F1}, {targetPos.y:F1})");
-                        }
-
-                        shrine.StartBaseInteraction();
-                    });
-
-                    // Wait for shrine menu to open
-                    var startTime = DateTime.Now;
-                    while (!StateSerializer.IsInMonsterSelection() && !TimedOut(startTime, 3000))
-                    {
-                        System.Threading.Thread.Sleep(50);
-                    }
-
-                    if (StateSerializer.IsInMonsterSelection())
-                    {
-                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact", type = "MONSTER_SHRINE" });
-                    }
-                    else
-                    {
-                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact_pending", type = "MONSTER_SHRINE", note = "Shrine triggered, menu may still be opening" });
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    Plugin.Log.LogError($"ExecuteInteract: Shrine interaction failed: {ex.Message}");
-                    return JsonHelper.Serialize(new { success = false, error = $"Shrine interaction failed: {ex.Message}" });
-                }
-            }
-
-            // Fallback to generic interact for other interactables
-            PlayerController.Instance?.OnInteract();
-            return JsonHelper.Serialize(new { success = true, action = "interact" });
-        }
-
         // =====================================================
         // POST-COMBAT AUTO-ADVANCE AND SKILL SELECTION
         // =====================================================
@@ -869,6 +52,15 @@ namespace AethermancerHarness
                 {
                     Plugin.Log.LogInfo("ProcessPostCombatStates: Skill selection menu is open");
                     return StateSerializer.GetSkillSelectionStateJson();
+                }
+
+                // Check for end of run screen and auto-continue
+                if (StateSerializer.IsInEndOfRunMenu())
+                {
+                    Plugin.Log.LogInfo("ProcessPostCombatStates: End of run screen detected, auto-continuing");
+                    AutoContinueFromEndOfRun();
+                    System.Threading.Thread.Sleep(500);
+                    continue;
                 }
 
                 if (IsInExploration())
@@ -932,7 +124,26 @@ namespace AethermancerHarness
         {
             bool notInCombat = !(GameStateManager.Instance?.IsCombat ?? false);
             bool notInPostCombat = !IsPostCombatMenuOpen();
-            return notInCombat && notInPostCombat;
+            bool notInEndOfRun = !StateSerializer.IsInEndOfRunMenu();
+            return notInCombat && notInPostCombat && notInEndOfRun;
+        }
+
+        private static void AutoContinueFromEndOfRun()
+        {
+            var menu = GetEndOfRunMenu();
+            if (menu == null || !menu.IsOpen)
+            {
+                Plugin.Log.LogWarning("AutoContinueFromEndOfRun: End of run menu not available");
+                return;
+            }
+
+            bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
+            Plugin.Log.LogInfo($"AutoContinueFromEndOfRun: Closing end-of-run screen ({(isVictory ? "VICTORY" : "DEFEAT")})");
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                menu.Close();
+            });
         }
 
         private static bool WaitForWorthinessCanContinue(PostCombatMenu postCombatMenu, DateTime startTime, int timeoutMs)
@@ -999,15 +210,6 @@ namespace AethermancerHarness
             }
         }
 
-        private static void TriggerMenuConfirm(MenuList menuList)
-        {
-            if (InputConfirmMethod != null)
-            {
-                InputConfirmMethod.Invoke(menuList, null);
-                Plugin.Log.LogInfo("TriggerMenuConfirm: Called InputConfirm()");
-            }
-        }
-
         private static bool WaitForSkillSelectionOpen(DateTime startTime, int timeoutMs)
         {
             while (!TimedOut(startTime, timeoutMs))
@@ -1017,20 +219,6 @@ namespace AethermancerHarness
                 System.Threading.Thread.Sleep(100);
             }
             return false;
-        }
-
-        private static void TriggerContinue(PostCombatMenu postCombatMenu)
-        {
-            if (ContinueMethod != null)
-            {
-                ContinueMethod.Invoke(postCombatMenu, null);
-                Plugin.Log.LogInfo("TriggerContinue: Called Continue()");
-            }
-        }
-
-        private static bool TimedOut(DateTime startTime, int timeoutMs)
-        {
-            return (DateTime.Now - startTime).TotalMilliseconds >= timeoutMs;
         }
 
         private static string CreateExplorationResult(string combatResult)
@@ -1109,12 +297,6 @@ namespace AethermancerHarness
         // UNIFIED CHOICE HANDLER
         // =====================================================
 
-        /// <summary>
-        /// Unified choice handler that routes to the appropriate handler based on game state.
-        /// Handles dialogue choices, equipment selection, monster selection, and other choice-based interactions.
-        /// </summary>
-        /// <param name="choiceIndex">Index of the choice to select</param>
-        /// <param name="shift">Optional shift for monster selection: "normal" or "shifted"</param>
         public static string ExecuteChoice(int choiceIndex, string shift = null)
         {
             // Check equipment selection first (after picking equipment from dialogue/loot)
@@ -1122,6 +304,13 @@ namespace AethermancerHarness
             {
                 Plugin.Log.LogInfo($"ExecuteChoice: Routing to equipment selection handler (index {choiceIndex})");
                 return ExecuteEquipmentChoice(choiceIndex);
+            }
+
+            // Check difficulty selection (run start)
+            if (StateSerializer.IsInDifficultySelection())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to difficulty selection handler (index {choiceIndex})");
+                return ExecuteDifficultyChoice(choiceIndex);
             }
 
             // Check monster selection (shrine/starter)
@@ -1138,19 +327,13 @@ namespace AethermancerHarness
                 return ExecuteDialogueChoice(choiceIndex);
             }
 
-            return JsonHelper.Serialize(new { success = false, error = "No active choice context (not in dialogue, equipment selection, or monster selection)" });
+            return JsonHelper.Serialize(new { success = false, error = "No active choice context (not in dialogue, equipment selection, difficulty selection, or monster selection)" });
         }
 
         // =====================================================
         // MONSTER SELECTION (Shrine/Starter)
         // =====================================================
 
-        /// <summary>
-        /// Handle monster selection from shrine or starter selection screen.
-        /// Auto-confirms the selection (skips confirmation popup).
-        /// </summary>
-        /// <param name="choiceIndex">Index of the monster choice</param>
-        /// <param name="shift">Optional shift: "normal" or "shifted". If not specified, uses normal.</param>
         public static string ExecuteMonsterSelectionChoice(int choiceIndex, string shift = null)
         {
             var menu = UIController.Instance?.MonsterShrineMenu;
@@ -1250,12 +433,6 @@ namespace AethermancerHarness
                 // Wait for the selection to process
                 System.Threading.Thread.Sleep(500);
 
-                // Check what state we transitioned to
-                // Monster selection can lead to:
-                // 1. MonsterSelectMenu opening (if player has 3 monsters - replacement needed)
-                // 2. PostCombatMenu for XP distribution
-                // 3. Back to exploration
-
                 // Wait a bit more for state transitions
                 var startTime = DateTime.Now;
                 while (!TimedOut(startTime, 3000))
@@ -1264,7 +441,6 @@ namespace AethermancerHarness
                     if (StateSerializer.IsInEquipmentSelection())
                     {
                         Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Transitioned to equipment selection (monster replacement)");
-                        // Note: This is actually MonsterSelectMenu with ShrineMonsterToReplace type
                         return JsonHelper.Serialize(new
                         {
                             success = true,
@@ -1332,10 +508,6 @@ namespace AethermancerHarness
         // EQUIPMENT SELECTION
         // =====================================================
 
-        /// <summary>
-        /// Handle equipment selection choice. Monsters are indices 0 to party.Count-1,
-        /// and scrap is index party.Count.
-        /// </summary>
         public static string ExecuteEquipmentChoice(int choiceIndex)
         {
             var menu = UIController.Instance?.MonsterSelectMenu;
@@ -1456,7 +628,6 @@ namespace AethermancerHarness
                 System.Threading.Thread.Sleep(300);
 
                 // The game shows a popup after scrapping - we need to close it
-                // Wait for popup and auto-confirm it
                 var startTime = DateTime.Now;
                 while ((DateTime.Now - startTime).TotalMilliseconds < 2000)
                 {
@@ -1531,42 +702,26 @@ namespace AethermancerHarness
             return UIController.Instance?.DialogueDisplay?.IsOpen ?? false;
         }
 
-        /// <summary>
-        /// Checks if the current dialogue state has a meaningful choice that requires user input.
-        /// Returns false if the only meaningful option is "Event" (which should be auto-selected).
-        /// </summary>
         private static bool HasMeaningfulChoice()
         {
             var data = GetCurrentDialogueData();
             if (data == null) return false;
 
-            // Check if we have dialogue options
             if (data.DialogueOptions == null || data.DialogueOptions.Length == 0) return false;
-
-            // If there's only one option, no real choice needed
             if (data.DialogueOptions.Length == 1) return false;
 
-            // Check if "Event" is one of the options - if so, we'll auto-select it
             int eventIndex = FindEventOptionIndex(data.DialogueOptions);
             if (eventIndex >= 0)
             {
-                // Event option exists - this is NOT a meaningful choice, we'll auto-select Event
                 return false;
             }
 
-            // Choice events with no Event option require user input
             if (data.IsChoiceEvent) return true;
-
-            // Multiple options (without Event) require user input
             if (data.DialogueOptions.Length > 1) return true;
 
             return false;
         }
 
-        /// <summary>
-        /// Find the index of an "Event" option in the dialogue options.
-        /// Returns -1 if not found.
-        /// </summary>
         private static int FindEventOptionIndex(string[] options)
         {
             if (options == null) return -1;
@@ -1581,10 +736,6 @@ namespace AethermancerHarness
             return -1;
         }
 
-        /// <summary>
-        /// Auto-progress through dialogue until a meaningful choice appears or dialogue ends.
-        /// Auto-selects "Event" option when available.
-        /// </summary>
         private static void AutoProgressDialogue(int timeoutMs = 10000)
         {
             var startTime = DateTime.Now;
@@ -1592,14 +743,12 @@ namespace AethermancerHarness
 
             while (!TimedOut(startTime, timeoutMs))
             {
-                // Check if dialogue closed
                 if (!IsDialogueOpen())
                 {
                     Plugin.Log.LogInfo("AutoProgressDialogue: Dialogue closed");
                     return;
                 }
 
-                // Check if skill selection opened (e.g., Witch dialogue)
                 if (StateSerializer.IsInSkillSelection())
                 {
                     Plugin.Log.LogInfo("AutoProgressDialogue: Skill selection opened");
@@ -1613,7 +762,6 @@ namespace AethermancerHarness
                     continue;
                 }
 
-                // Check if "Event" is an available option - auto-select it
                 if (data.DialogueOptions != null && data.DialogueOptions.Length > 0)
                 {
                     int eventIndex = FindEventOptionIndex(data.DialogueOptions);
@@ -1621,33 +769,26 @@ namespace AethermancerHarness
                     {
                         Plugin.Log.LogInfo($"AutoProgressDialogue: Found 'Event' option at index {eventIndex}, auto-selecting");
                         SelectDialogueOptionInternal(eventIndex);
-                        System.Threading.Thread.Sleep(300); // Wait for event to process
+                        System.Threading.Thread.Sleep(300);
                         continue;
                     }
                 }
 
-                // Stop if we have a meaningful choice (no Event option)
                 if (HasMeaningfulChoice())
                 {
                     Plugin.Log.LogInfo($"AutoProgressDialogue: Meaningful choice found with {data.DialogueOptions?.Length ?? 0} options");
                     return;
                 }
 
-                // Auto-advance: simulate confirm (must run on main thread)
                 Plugin.Log.LogInfo($"AutoProgressDialogue: Auto-advancing past '{data.DialogueText?.Substring(0, Math.Min(50, data.DialogueText?.Length ?? 0))}...'");
                 Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
 
-                System.Threading.Thread.Sleep(150); // Wait for UI update
+                System.Threading.Thread.Sleep(150);
             }
 
             Plugin.Log.LogWarning("AutoProgressDialogue: Timeout");
         }
 
-        /// <summary>
-        /// Internal method to select a dialogue option without returning a result.
-        /// Used for auto-selecting Event options.
-        /// Must run UI operations on main thread.
-        /// </summary>
         private static void SelectDialogueOptionInternal(int choiceIndex)
         {
             var dialogueInteractable = GetCurrentDialogueInteractable();
@@ -1671,13 +812,10 @@ namespace AethermancerHarness
 
             try
             {
-                // Run UI operations on main thread
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Trigger node close events first
                     dialogueInteractable.TriggerNodeOnCloseEvents();
 
-                    // Select the dialogue option
                     bool isEnd, forceSkip;
                     dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
 
@@ -1685,13 +823,11 @@ namespace AethermancerHarness
 
                     if (isEnd && forceSkip)
                     {
-                        // Dialogue is ending - close the UI
                         Plugin.Log.LogInfo("SelectDialogueOptionInternal: Dialogue ending");
                         UIController.Instance.SetDialogueVisibility(visible: false);
                     }
                     else if (IsDialogueOpen())
                     {
-                        // Show next dialogue if still open
                         var nextDialogue = dialogueInteractable.GetNextDialogue();
                         if (nextDialogue != null)
                         {
@@ -1706,10 +842,6 @@ namespace AethermancerHarness
             }
         }
 
-        /// <summary>
-        /// Start dialogue with an NPC by index from the map's DialogueInteractables.
-        /// Auto-teleports to NPC and auto-progresses until meaningful choice or dialogue end.
-        /// </summary>
         public static string ExecuteNpcInteract(int npcIndex)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
@@ -1740,25 +872,20 @@ namespace AethermancerHarness
             var npcName = npc.DialogueCharacter?.CharacterName ?? "Unknown";
             Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName} at index {npcIndex}");
 
-            // Run UI/transform operations on main thread
             Plugin.RunOnMainThreadAndWait(() =>
             {
-                // Teleport player near NPC
                 var npcPos = npc.transform.position;
                 var playerMovement = PlayerMovementController.Instance;
                 if (playerMovement != null)
                 {
-                    // Teleport 2 units away in x direction for interaction range
                     var targetPos = new UnityEngine.Vector3(npcPos.x - 2f, npcPos.y, npcPos.z);
                     playerMovement.transform.position = targetPos;
                     Plugin.Log.LogInfo($"ExecuteNpcInteract: Teleported player near NPC at ({targetPos.x:F1}, {targetPos.y:F1})");
                 }
 
-                // Trigger dialogue
                 npc.ForceStart();
             });
 
-            // Wait for dialogue to open
             var startTime = DateTime.Now;
             while (!IsDialogueOpen() && !TimedOut(startTime, 3000))
             {
@@ -1770,13 +897,9 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { success = false, error = "Dialogue failed to open" });
             }
 
-            // Small delay for dialogue to initialize
             System.Threading.Thread.Sleep(200);
-
-            // Auto-progress through non-choice dialogue
             AutoProgressDialogue();
 
-            // Check what state we're in now
             if (StateSerializer.IsInSkillSelection())
             {
                 return JsonHelper.Serialize(new
@@ -1790,7 +913,6 @@ namespace AethermancerHarness
 
             if (!IsDialogueOpen())
             {
-                // Dialogue ended without requiring input
                 return JsonHelper.Serialize(new
                 {
                     success = true,
@@ -1800,13 +922,9 @@ namespace AethermancerHarness
                 });
             }
 
-            // Return current dialogue state with choices
             return StateSerializer.GetDialogueStateJson();
         }
 
-        /// <summary>
-        /// Select a dialogue choice by index and auto-progress until next choice or dialogue end.
-        /// </summary>
         public static string ExecuteDialogueChoice(int choiceIndex)
         {
             if (!IsDialogueOpen())
@@ -1834,10 +952,8 @@ namespace AethermancerHarness
                 bool isEnd = false;
                 bool forceSkip = false;
 
-                // Run all UI operations on main thread
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Select the option in the UI if possible (wrapped in try-catch for safety)
                     try
                     {
                         var characterDisplay = dialogueData.LeftIsSpeaking
@@ -1861,23 +977,18 @@ namespace AethermancerHarness
                         Plugin.Log.LogWarning($"ExecuteDialogueChoice: UI selection failed (non-fatal): {uiEx.Message}");
                     }
 
-                    // Trigger node close events
                     dialogueInteractable.TriggerNodeOnCloseEvents();
-
-                    // Select the dialogue option
                     dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
 
                     Plugin.Log.LogInfo($"ExecuteDialogueChoice: isEnd={isEnd}, forceSkip={forceSkip}");
 
                     if (isEnd && forceSkip)
                     {
-                        // Dialogue is ending
                         Plugin.Log.LogInfo("ExecuteDialogueChoice: Dialogue ending");
                         UIController.Instance.SetDialogueVisibility(visible: false);
                     }
                     else if (IsDialogueOpen())
                     {
-                        // Show next dialogue if still open
                         var nextDialogue = dialogueInteractable.GetNextDialogue();
                         if (nextDialogue != null)
                         {
@@ -1890,7 +1001,6 @@ namespace AethermancerHarness
                 {
                     System.Threading.Thread.Sleep(300);
 
-                    // Check what state we transitioned to
                     if (StateSerializer.IsInEquipmentSelection())
                     {
                         return JsonHelper.Serialize(new
@@ -1921,11 +1031,8 @@ namespace AethermancerHarness
                 }
 
                 System.Threading.Thread.Sleep(200);
-
-                // Auto-progress through non-choice dialogue (including auto-selecting Event if present)
                 AutoProgressDialogue();
 
-                // Return current state after auto-progression
                 if (StateSerializer.IsInEquipmentSelection())
                 {
                     return JsonHelper.Serialize(new
@@ -1976,7 +1083,6 @@ namespace AethermancerHarness
         // MERCHANT SHOP INTERACTION
         // =====================================================
 
-        // Cached reflection for merchant menu access
         private static FieldInfo _merchantMenuField;
 
         private static MerchantMenu GetMerchantMenu()
@@ -1997,9 +1103,6 @@ namespace AethermancerHarness
             return GetMerchantMenu()?.IsOpen ?? false;
         }
 
-        /// <summary>
-        /// Open the merchant shop. Auto-teleports to merchant.
-        /// </summary>
         public static string ExecuteMerchantInteract()
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
@@ -2022,7 +1125,6 @@ namespace AethermancerHarness
 
             Plugin.Log.LogInfo("ExecuteMerchantInteract: Opening merchant shop");
 
-            // Teleport player near merchant
             var merchantPos = merchant.transform.position;
             var playerMovement = PlayerMovementController.Instance;
             if (playerMovement != null)
@@ -2032,10 +1134,8 @@ namespace AethermancerHarness
                 Plugin.Log.LogInfo($"ExecuteMerchantInteract: Teleported player near merchant");
             }
 
-            // Start merchant interaction
             merchant.StartMerchantInteraction();
 
-            // Wait for menu to open
             var startTime = DateTime.Now;
             while (!IsMerchantMenuOpen() && !TimedOut(startTime, 3000))
             {
@@ -2047,14 +1147,11 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { success = false, error = "Merchant menu failed to open" });
             }
 
-            System.Threading.Thread.Sleep(200); // Let UI initialize
+            System.Threading.Thread.Sleep(200);
 
             return StateSerializer.GetMerchantStateJson();
         }
 
-        /// <summary>
-        /// Buy an item from the merchant by index.
-        /// </summary>
         public static string ExecuteMerchantBuy(int itemIndex, int quantity = 1)
         {
             if (!IsMerchantMenuOpen())
@@ -2070,7 +1167,6 @@ namespace AethermancerHarness
 
             var shopItem = stockedItems[itemIndex];
 
-            // Check affordability
             if (!merchant.CanBuyItem(shopItem, quantity))
             {
                 return JsonHelper.Serialize(new
@@ -2087,22 +1183,17 @@ namespace AethermancerHarness
 
             Plugin.Log.LogInfo($"ExecuteMerchantBuy: Purchasing {itemName} for {cost} gold");
 
-            // Make the purchase
             merchant.BuyItem(shopItem, quantity);
 
-            // For EXP purchases, the game opens a post-combat menu to distribute XP
-            // Wait for it to complete
             if (shopItem.ItemType == ShopItemType.Exp)
             {
                 Plugin.Log.LogInfo("ExecuteMerchantBuy: EXP purchase - waiting for distribution to complete");
                 var startTime = DateTime.Now;
 
-                // Wait for post-combat menu to open and close
                 while (!TimedOut(startTime, 5000))
                 {
                     System.Threading.Thread.Sleep(100);
 
-                    // Check if we're back to merchant menu
                     if (IsMerchantMenuOpen())
                     {
                         Plugin.Log.LogInfo("ExecuteMerchantBuy: Back to merchant menu");
@@ -2111,13 +1202,11 @@ namespace AethermancerHarness
                 }
             }
 
-            // For equipment purchases, the game opens equipment selection menu
             if (shopItem.ItemType == ShopItemType.Equipment)
             {
                 Plugin.Log.LogInfo("ExecuteMerchantBuy: Equipment purchase - waiting for equipment selection");
                 var startTime = DateTime.Now;
 
-                // Wait for equipment selection menu to open
                 while (!TimedOut(startTime, 3000))
                 {
                     System.Threading.Thread.Sleep(100);
@@ -2139,7 +1228,7 @@ namespace AethermancerHarness
                 }
             }
 
-            System.Threading.Thread.Sleep(200); // Let UI update
+            System.Threading.Thread.Sleep(200);
 
             return JsonHelper.Serialize(new
             {
@@ -2151,9 +1240,6 @@ namespace AethermancerHarness
             });
         }
 
-        /// <summary>
-        /// Close the merchant menu.
-        /// </summary>
         public static string ExecuteMerchantClose()
         {
             if (!IsMerchantMenuOpen())
@@ -2163,7 +1249,6 @@ namespace AethermancerHarness
 
             UIController.Instance.SetMerchantMenuVisibility(visible: false);
 
-            // Wait for menu to close
             var startTime = DateTime.Now;
             while (IsMerchantMenuOpen() && !TimedOut(startTime, 2000))
             {
@@ -2183,71 +1268,7 @@ namespace AethermancerHarness
         // RUN START AND DIFFICULTY SELECTION
         // =====================================================
 
-        /// <summary>
-        /// Start a new run from Pilgrim's Rest. Opens difficulty selection if unlocked,
-        /// otherwise proceeds directly to monster selection.
-        /// </summary>
-        public static string ExecuteStartRun()
-        {
-            // Validate we're in exploration mode
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Serialize(new { success = false, error = "Cannot start run during combat" });
-
-            // Check if we're in Pilgrim's Rest
-            var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
-            if (currentArea != EArea.PilgrimsRest)
-                return JsonHelper.Serialize(new { success = false, error = $"Must be in Pilgrim's Rest to start run. Current area: {currentArea}" });
-
-            // Find the start run interactable
-            var startRunInteractable = StateSerializer.FindStartRunInteractable();
-            if (startRunInteractable == null)
-                return JsonHelper.Serialize(new { success = false, error = "Start run interactable not found in Pilgrim's Rest" });
-
-            Plugin.Log.LogInfo("ExecuteStartRun: Triggering start run interaction");
-
-            try
-            {
-                // Run on main thread
-                Plugin.RunOnMainThreadAndWait(() =>
-                {
-                    // Use ForceStartInteraction which handles difficulty check internally
-                    startRunInteractable.ForceStartInteraction();
-                });
-
-                // Wait for state transition
-                var startTime = DateTime.Now;
-                while (!TimedOut(startTime, 5000))
-                {
-                    System.Threading.Thread.Sleep(100);
-
-                    // Check if difficulty selection opened
-                    if (StateSerializer.IsInDifficultySelection())
-                    {
-                        Plugin.Log.LogInfo("ExecuteStartRun: Difficulty selection opened");
-                        return StateSerializer.GetDifficultySelectionStateJson();
-                    }
-
-                    // Check if monster selection opened (no difficulty selection needed)
-                    if (StateSerializer.IsInMonsterSelection())
-                    {
-                        Plugin.Log.LogInfo("ExecuteStartRun: Monster selection opened (difficulties not unlocked)");
-                        return StateSerializer.GetMonsterSelectionStateJson();
-                    }
-                }
-
-                return JsonHelper.Serialize(new { success = false, error = "Timeout waiting for run start menu to open" });
-            }
-            catch (System.Exception ex)
-            {
-                Plugin.Log.LogError($"ExecuteStartRun: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Serialize(new { success = false, error = $"Exception during run start: {ex.Message}" });
-            }
-        }
-
-        /// <summary>
-        /// Select a difficulty level during run start. Valid values: "Normal", "Heroic", "Mythic"
-        /// </summary>
-        public static string ExecuteSelectDifficulty(string difficulty)
+        public static string ExecuteDifficultyChoice(int choiceIndex)
         {
             if (!StateSerializer.IsInDifficultySelection())
                 return JsonHelper.Serialize(new { success = false, error = "Not in difficulty selection screen" });
@@ -2256,42 +1277,38 @@ namespace AethermancerHarness
             if (menu == null || !menu.IsOpen)
                 return JsonHelper.Serialize(new { success = false, error = "Difficulty selection menu not available" });
 
-            // Parse difficulty
             EDifficulty targetDifficulty;
-            switch (difficulty?.ToLower())
+            switch (choiceIndex)
             {
-                case "normal":
+                case 0:
                     targetDifficulty = EDifficulty.Normal;
                     break;
-                case "heroic":
+                case 1:
                     targetDifficulty = EDifficulty.Heroic;
                     break;
-                case "mythic":
+                case 2:
                     targetDifficulty = EDifficulty.Mythic;
                     break;
                 default:
-                    return JsonHelper.Serialize(new { success = false, error = $"Invalid difficulty: '{difficulty}'. Valid values: Normal, Heroic, Mythic" });
+                    return JsonHelper.Serialize(new { success = false, error = $"Invalid difficulty index: {choiceIndex}. Valid: 0=Normal, 1=Heroic, 2=Mythic" });
             }
 
-            // Check if difficulty is unlocked
             var maxUnlocked = ProgressManager.Instance?.UnlockedDifficulty ?? 1;
             if ((int)targetDifficulty > maxUnlocked)
             {
                 return JsonHelper.Serialize(new
                 {
                     success = false,
-                    error = $"Difficulty '{difficulty}' is not unlocked. Max unlocked level: {maxUnlocked}"
+                    error = $"Difficulty '{targetDifficulty}' is not unlocked. Max unlocked level: {maxUnlocked}"
                 });
             }
 
-            Plugin.Log.LogInfo($"ExecuteSelectDifficulty: Selecting difficulty {targetDifficulty}");
+            Plugin.Log.LogInfo($"ExecuteDifficultyChoice: Selecting difficulty {targetDifficulty} (index {choiceIndex})");
 
             try
             {
-                // Navigate to the correct difficulty and confirm
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Navigate to target difficulty
                     while (menu.CurrentDifficulty != targetDifficulty)
                     {
                         if ((int)menu.CurrentDifficulty < (int)targetDifficulty)
@@ -2300,21 +1317,17 @@ namespace AethermancerHarness
                             menu.OnGoLeft();
                     }
 
-                    // Trigger confirm (opens popup)
                     menu.OnConfirm();
                 });
 
-                // Wait for popup to appear and confirm it
                 System.Threading.Thread.Sleep(300);
 
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // The popup asks for confirmation - select the confirm button (index 0) and trigger it
                     var popup = PopupController.Instance;
                     if (popup?.IsOpen ?? false)
                     {
-                        Plugin.Log.LogInfo("ExecuteSelectDifficulty: Confirming popup");
-                        // Select the first button (Confirm) and trigger via InputConfirm on the menu
+                        Plugin.Log.LogInfo("ExecuteDifficultyChoice: Confirming popup");
                         popup.ConfirmMenu.SelectByIndex(0);
                         if (InputConfirmMethod != null)
                         {
@@ -2323,7 +1336,6 @@ namespace AethermancerHarness
                     }
                 });
 
-                // Wait for monster selection to open
                 var startTime = DateTime.Now;
                 while (!TimedOut(startTime, 5000))
                 {
@@ -2331,7 +1343,7 @@ namespace AethermancerHarness
 
                     if (StateSerializer.IsInMonsterSelection())
                     {
-                        Plugin.Log.LogInfo($"ExecuteSelectDifficulty: Monster selection opened with difficulty {targetDifficulty}");
+                        Plugin.Log.LogInfo($"ExecuteDifficultyChoice: Monster selection opened with difficulty {targetDifficulty}");
                         return JsonHelper.Serialize(new
                         {
                             success = true,
@@ -2347,16 +1359,15 @@ namespace AethermancerHarness
             }
             catch (System.Exception ex)
             {
-                Plugin.Log.LogError($"ExecuteSelectDifficulty: Exception - {ex.Message}\n{ex.StackTrace}");
+                Plugin.Log.LogError($"ExecuteDifficultyChoice: Exception - {ex.Message}\n{ex.StackTrace}");
                 return JsonHelper.Serialize(new { success = false, error = $"Exception during difficulty selection: {ex.Message}" });
             }
         }
 
         // =====================================================
-        // END OF RUN (VICTORY/DEFEAT SCREEN)
+        // END OF RUN (VICTORY/DEFEAT SCREEN) - Internal helpers
         // =====================================================
 
-        // Cached reflection for EndOfRunMenu access
         private static FieldInfo _endOfRunMenuField;
 
         private static EndOfRunMenu GetEndOfRunMenu()
@@ -2370,67 +1381,6 @@ namespace AethermancerHarness
                     BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
             }
             return _endOfRunMenuField?.GetValue(ui) as EndOfRunMenu;
-        }
-
-        /// <summary>
-        /// Advance past the end-of-run screen (victory or defeat) back to Pilgrim's Rest.
-        /// </summary>
-        public static string ExecuteContinueFromEndOfRun()
-        {
-            if (!StateSerializer.IsInEndOfRunMenu())
-                return JsonHelper.Serialize(new { success = false, error = "Not in end-of-run screen" });
-
-            var menu = GetEndOfRunMenu();
-            if (menu == null || !menu.IsOpen)
-                return JsonHelper.Serialize(new { success = false, error = "End of run menu not available" });
-
-            // Determine if victory or defeat
-            bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
-            string result = isVictory ? "VICTORY" : "DEFEAT";
-
-            Plugin.Log.LogInfo($"ExecuteContinueFromEndOfRun: Closing end-of-run screen ({result})");
-
-            try
-            {
-                // Close the menu
-                Plugin.RunOnMainThreadAndWait(() =>
-                {
-                    menu.Close();
-                });
-
-                // Wait for transition back to Pilgrim's Rest
-                var startTime = DateTime.Now;
-                while (!TimedOut(startTime, 10000))
-                {
-                    System.Threading.Thread.Sleep(200);
-
-                    // Check if we're back in exploration
-                    if (!(GameStateManager.Instance?.IsCombat ?? true) &&
-                        !StateSerializer.IsInEndOfRunMenu() &&
-                        !StateSerializer.IsInPostCombatMenu())
-                    {
-                        // Give scene transition time to complete
-                        System.Threading.Thread.Sleep(1000);
-
-                        Plugin.Log.LogInfo("ExecuteContinueFromEndOfRun: Returned to exploration");
-                        return JsonHelper.Serialize(new
-                        {
-                            success = true,
-                            action = "continue_from_end_of_run",
-                            runResult = result,
-                            phase = "EXPLORATION",
-                            state = JObject.Parse(StateSerializer.ToJson())
-                        });
-                    }
-                }
-
-                return JsonHelper.Serialize(new { success = false, error = "Timeout waiting for return to exploration" });
-            }
-            catch (System.Exception ex)
-            {
-                Plugin.Log.LogError($"ExecuteContinueFromEndOfRun: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Serialize(new { success = false, error = $"Exception during continue: {ex.Message}" });
-            }
         }
     }
 }

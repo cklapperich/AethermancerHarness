@@ -1301,7 +1301,7 @@ namespace AethermancerHarness
         public static NextAreaInteractable FindStartRunInteractable()
         {
             // Find NextAreaInteractable with StartRun headliner
-            var interactables = UnityEngine.Object.FindObjectsOfType<NextAreaInteractable>();
+            var interactables = UnityEngine.Object.FindObjectsByType<NextAreaInteractable>(UnityEngine.FindObjectsSortMode.None);
             foreach (var interactable in interactables)
             {
                 if (interactable.HeadlinerText == NextAreaInteractable.Headliner.StartRun)
@@ -1441,6 +1441,22 @@ namespace AethermancerHarness
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["found"] = secret.WasUsedUp
                 });
+            }
+
+            // Add start run interactable if in Pilgrim's Rest
+            var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
+            if (currentArea == EArea.PilgrimsRest)
+            {
+                var startRun = FindStartRunInteractable();
+                if (startRun != null)
+                {
+                    var pos = startRun.transform.position;
+                    arr.Add(new JObject
+                    {
+                        ["type"] = "START_RUN",
+                        ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z
+                    });
+                }
             }
 
             return arr;

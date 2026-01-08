@@ -176,27 +176,6 @@ namespace AethermancerHarness
                             (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
                         break;
 
-                    case "/run/start":
-                        if (method == "POST")
-                            responseBody = ActionHandler.ExecuteStartRun();
-                        else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
-                        break;
-
-                    case "/run/difficulty":
-                        if (method == "POST")
-                            responseBody = HandleSelectDifficulty(ReadBody(request));
-                        else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
-                        break;
-
-                    case "/run/continue":
-                        if (method == "POST")
-                            responseBody = ActionHandler.ExecuteContinueFromEndOfRun();
-                        else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
-                        break;
-
                     default:
                         responseBody = JsonHelper.Serialize(new
                         {
@@ -206,8 +185,7 @@ namespace AethermancerHarness
                                 "/health", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
                                 "/exploration/interact", "/skill-select", "/npc/interact", "/choice",
-                                "/merchant/interact", "/merchant/buy", "/merchant/close",
-                                "/run/start", "/run/difficulty", "/run/continue"
+                                "/merchant/interact", "/merchant/buy", "/merchant/close"
                             }
                         });
                         statusCode = 404;
@@ -371,17 +349,6 @@ namespace AethermancerHarness
                 return JsonHelper.Serialize(new { error = "itemIndex is required and must be >= 0" });
 
             return ActionHandler.ExecuteMerchantBuy(itemIndex, quantity);
-        }
-
-        private string HandleSelectDifficulty(string body)
-        {
-            var json = JsonHelper.Parse(body);
-            var difficulty = JsonHelper.Value(json, "difficulty", (string)null);
-
-            if (string.IsNullOrEmpty(difficulty))
-                return JsonHelper.Serialize(new { error = "difficulty is required (Normal, Heroic, or Mythic)" });
-
-            return ActionHandler.ExecuteSelectDifficulty(difficulty);
         }
     }
 }
