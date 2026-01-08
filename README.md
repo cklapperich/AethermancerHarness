@@ -49,6 +49,7 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | POST | `/combat/start` | Start combat with any monster group |
 | POST | `/exploration/teleport` | Teleport player to coordinates |
 | POST | `/exploration/interact` | Trigger interaction with nearby object |
+| POST | `/exploration/loot-all` | Break all destructibles + collect loot |
 | POST | `/skill-select` | Select skill during level-up |
 | POST | `/npc/interact` | Start dialogue with NPC (auto-progresses to choices) |
 | POST | `/choice` | Universal choice handler (dialogue, equipment, merchant) |

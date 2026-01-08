@@ -23,7 +23,7 @@ namespace AethermancerHarness
                 if (TimedOut(startTime, timeoutMs))
                 {
                     Plugin.Log.LogWarning("WaitForPostCombatComplete: Timeout waiting for PostCombatMenu");
-                    return JsonHelper.Error("Timeout waiting for PostCombatMenu to open", new { phase = GamePhase.Timeout.ToJsonString() });
+                    return JsonConfig.Error("Timeout waiting for PostCombatMenu to open", new { phase = GamePhase.Timeout });
                 }
 
                 if (IsInExploration())
@@ -46,7 +46,7 @@ namespace AethermancerHarness
             while (true)
             {
                 if (TimedOut(startTime, timeoutMs))
-                    return JsonHelper.Error("Timeout waiting for post-combat processing", new { phase = GamePhase.Timeout.ToJsonString() });
+                    return JsonConfig.Error("Timeout waiting for post-combat processing", new { phase = GamePhase.Timeout });
 
                 if (StateSerializer.IsInSkillSelection())
                 {
@@ -226,7 +226,7 @@ namespace AethermancerHarness
             var result = new JObject
             {
                 ["success"] = true,
-                ["combatResult"] = combatResult.ToJsonString(),
+                ["combatResult"] = combatResult.ToString(),
                 ["state"] = JObject.Parse(StateSerializer.ToJson())
             };
             return result.ToString(Newtonsoft.Json.Formatting.None);
@@ -235,14 +235,14 @@ namespace AethermancerHarness
         public static string ExecuteSkillSelection(int skillIndex, bool reroll = false)
         {
             if (!StateSerializer.IsInSkillSelection())
-                return JsonHelper.Error("Not in skill selection screen");
+                return JsonConfig.Error("Not in skill selection screen");
 
             var skillSelectMenu = UIController.Instance.PostCombatMenu.SkillSelectMenu;
 
             if (reroll)
             {
                 if (InventoryManager.Instance.SkillRerolls <= 0)
-                    return JsonHelper.Error("No skill rerolls available");
+                    return JsonConfig.Error("No skill rerolls available");
 
                 var menuList = skillSelectMenu.MenuList;
                 for (int i = 0; i < menuList.List.Count; i++)
@@ -256,7 +256,7 @@ namespace AethermancerHarness
                         return StateSerializer.GetSkillSelectionStateJson();
                     }
                 }
-                return JsonHelper.Error("Could not find reroll button");
+                return JsonConfig.Error("Could not find reroll button");
             }
 
             if (skillIndex == -1)
@@ -273,7 +273,7 @@ namespace AethermancerHarness
                         return WaitForPostCombatComplete();
                     }
                 }
-                return JsonHelper.Error("Max health option not available");
+                return JsonConfig.Error("Max health option not available");
             }
 
             if (skillIndex >= 0 && skillIndex <= 2)
@@ -287,10 +287,10 @@ namespace AethermancerHarness
                     System.Threading.Thread.Sleep(500);
                     return WaitForPostCombatComplete();
                 }
-                return JsonHelper.Error($"Invalid skill index: {skillIndex}");
+                return JsonConfig.Error($"Invalid skill index: {skillIndex}");
             }
 
-            return JsonHelper.Error($"Invalid skill index: {skillIndex}. Use 0-2 for skills, -1 for max health.");
+            return JsonConfig.Error($"Invalid skill index: {skillIndex}. Use 0-2 for skills, -1 for max health.");
         }
 
         // =====================================================
@@ -327,6 +327,13 @@ namespace AethermancerHarness
                 return ExecuteMonsterSelectionChoice(choiceIndex, shift);
             }
 
+            // Check aether spring menu
+            if (StateSerializer.IsInAetherSpringMenu())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to aether spring handler (index {choiceIndex})");
+                return ExecuteAetherSpringChoice(choiceIndex);
+            }
+
             // Check dialogue
             if (IsDialogueOpen())
             {
@@ -334,7 +341,7 @@ namespace AethermancerHarness
                 return ExecuteDialogueChoice(choiceIndex);
             }
 
-            return JsonHelper.Error("No active choice context (not in dialogue, equipment selection, difficulty selection, merchant, or monster selection)");
+            return JsonConfig.Error("No active choice context (not in dialogue, equipment selection, difficulty selection, merchant, or monster selection)");
         }
 
         // =====================================================
@@ -345,20 +352,20 @@ namespace AethermancerHarness
         {
             var menu = UIController.Instance?.MonsterShrineMenu;
             if (menu == null || !menu.IsOpen)
-                return JsonHelper.Error("Monster selection menu not open");
+                return JsonConfig.Error("Monster selection menu not open");
 
             var selection = menu.MonsterSelection;
             var displayedMonsters = menu.DisplayedMonsters;
 
             if (displayedMonsters == null || displayedMonsters.Count == 0)
-                return JsonHelper.Error("No monsters available");
+                return JsonConfig.Error("No monsters available");
 
             // Calculate total count including random entry
             int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
 
             // Validate choice index
             if (choiceIndex < 0 || choiceIndex >= totalCount)
-                return JsonHelper.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{totalCount - 1}");
+                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{totalCount - 1}");
 
             // Check if selecting random
             var isRandom = selection.HasRandomMonster && choiceIndex == selection.RandomMonsterPosition;
@@ -392,7 +399,7 @@ namespace AethermancerHarness
                 }
                 else if (!shift.Equals("normal", System.StringComparison.OrdinalIgnoreCase))
                 {
-                    return JsonHelper.Error($"Invalid shift value: '{shift}'. Use 'normal' or 'shifted'.");
+                    return JsonConfig.Error($"Invalid shift value: '{shift}'. Use 'normal' or 'shifted'.");
                 }
             }
 
@@ -402,7 +409,7 @@ namespace AethermancerHarness
                 bool hasShiftedVariant = InventoryManager.Instance?.HasShiftedMementosOfMonster(selectedMonster) ?? false;
                 if (!hasShiftedVariant)
                 {
-                    return JsonHelper.Error($"Shifted variant not available for {monsterName}");
+                    return JsonConfig.Error($"Shifted variant not available for {monsterName}");
                 }
             }
 
@@ -448,14 +455,14 @@ namespace AethermancerHarness
                     if (StateSerializer.IsInEquipmentSelection())
                     {
                         Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Transitioned to equipment selection (monster replacement)");
-                        return JsonHelper.Serialize(new
+                        return JsonConfig.Serialize(new
                         {
                             success = true,
                             action = "monster_selected",
                             selected = monsterName,
-                            shift = targetShift.ToString(),
+                            shift = targetShift,
                             isRandom = isRandom,
-                            phase = GamePhase.EquipmentSelection.ToJsonString(),
+                            phase = GamePhase.EquipmentSelection,
                             note = "Select which monster to replace"
                         });
                     }
@@ -464,14 +471,14 @@ namespace AethermancerHarness
                     if (StateSerializer.IsInSkillSelection())
                     {
                         Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Transitioned to skill selection");
-                        return JsonHelper.Serialize(new
+                        return JsonConfig.Serialize(new
                         {
                             success = true,
                             action = "monster_selected",
                             selected = monsterName,
-                            shift = targetShift.ToString(),
+                            shift = targetShift,
                             isRandom = isRandom,
-                            phase = GamePhase.SkillSelection.ToJsonString(),
+                            phase = GamePhase.SkillSelection,
                             note = "Monster rebirthed with XP - select skill"
                         });
                     }
@@ -494,20 +501,20 @@ namespace AethermancerHarness
                 }
 
                 Plugin.Log.LogInfo($"ExecuteMonsterSelectionChoice: Monster '{monsterName}' selected successfully (shift: {targetShift})");
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = true,
                     action = "monster_selected",
                     selected = monsterName,
-                    shift = targetShift.ToString(),
+                    shift = targetShift,
                     isRandom = isRandom,
-                    phase = GamePhase.Exploration.ToJsonString()
+                    phase = GamePhase.Exploration
                 });
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteMonsterSelectionChoice: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Error($"Exception during monster selection: {ex.Message}");
+                return JsonConfig.Error($"Exception during monster selection: {ex.Message}");
             }
         }
 
@@ -519,17 +526,17 @@ namespace AethermancerHarness
         {
             var menu = UIController.Instance?.MonsterSelectMenu;
             if (menu == null || !menu.IsOpen)
-                return JsonHelper.Error("Equipment selection menu not open");
+                return JsonConfig.Error("Equipment selection menu not open");
 
             var party = MonsterManager.Instance?.Active;
             if (party == null)
-                return JsonHelper.Error("No party available");
+                return JsonConfig.Error("No party available");
 
             int scrapIndex = party.Count;
 
             // Validate choice index
             if (choiceIndex < 0 || choiceIndex > scrapIndex)
-                return JsonHelper.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{scrapIndex}");
+                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{scrapIndex}");
 
             // Handle scrap
             if (choiceIndex == scrapIndex)
@@ -548,7 +555,7 @@ namespace AethermancerHarness
         {
             var newEquipment = menu.NewEquipmentInstance;
             if (newEquipment == null)
-                return JsonHelper.Error("No equipment to assign");
+                return JsonConfig.Error("No equipment to assign");
 
             var prevEquipment = targetMonster.Equipment?.Equipment;
             var newEquipName = newEquipment.Equipment?.GetName() ?? "Unknown";
@@ -576,33 +583,33 @@ namespace AethermancerHarness
                 {
                     var prevEquipName = prevEquipment?.Equipment?.GetName() ?? "Unknown";
                     Plugin.Log.LogInfo($"ExecuteEquipmentAssign: Trade occurred - now holding {prevEquipName}");
-                    return JsonHelper.Serialize(new
+                    return JsonConfig.Serialize(new
                     {
                         success = true,
                         action = "equipment_trade",
                         assignedTo = targetMonster.Name,
                         assigned = newEquipName,
                         nowHolding = prevEquipName,
-                        phase = GamePhase.EquipmentSelection.ToJsonString(),
+                        phase = GamePhase.EquipmentSelection,
                         state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
                     });
                 }
 
                 // Equipment assigned, back to exploration
                 Plugin.Log.LogInfo($"ExecuteEquipmentAssign: Equipment assigned to {targetMonster.Name}");
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = true,
                     action = "equipment_assigned",
                     assignedTo = targetMonster.Name,
                     equipment = newEquipName,
-                    phase = GamePhase.Exploration.ToJsonString()
+                    phase = GamePhase.Exploration
                 });
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteEquipmentAssign: Exception - {ex.Message}");
-                return JsonHelper.Error($"Exception during equipment assignment: {ex.Message}");
+                return JsonConfig.Error($"Exception during equipment assignment: {ex.Message}");
             }
         }
 
@@ -610,7 +617,7 @@ namespace AethermancerHarness
         {
             var equipment = menu.NewEquipmentInstance;
             if (equipment == null)
-                return JsonHelper.Error("No equipment to scrap");
+                return JsonConfig.Error("No equipment to scrap");
 
             var equipName = equipment.Equipment?.GetName() ?? "Unknown";
             var scrapValue = equipment.Equipment?.GetScrapGoldGain() ?? 0;
@@ -653,20 +660,20 @@ namespace AethermancerHarness
                 System.Threading.Thread.Sleep(300);
 
                 Plugin.Log.LogInfo($"ExecuteEquipmentScrap: Scrapped {equipName} for {scrapValue} gold");
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = true,
                     action = "equipment_scrapped",
                     equipment = equipName,
                     goldGained = scrapValue,
                     goldTotal = InventoryManager.Instance?.Gold ?? 0,
-                    phase = GamePhase.Exploration.ToJsonString()
+                    phase = GamePhase.Exploration
                 });
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteEquipmentScrap: Exception - {ex.Message}");
-                return JsonHelper.Error($"Exception during equipment scrap: {ex.Message}");
+                return JsonConfig.Error($"Exception during equipment scrap: {ex.Message}");
             }
         }
 
@@ -822,29 +829,29 @@ namespace AethermancerHarness
         public static string ExecuteNpcInteract(int npcIndex)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Error("Cannot interact with NPCs during combat");
+                return JsonConfig.Error("Cannot interact with NPCs during combat");
 
             if (IsDialogueOpen())
-                return JsonHelper.Error("Dialogue already open");
+                return JsonConfig.Error("Dialogue already open");
 
             var map = LevelGenerator.Instance?.Map;
             if (map == null)
-                return JsonHelper.Error("Map not loaded");
+                return JsonConfig.Error("Map not loaded");
 
             var interactables = map.DialogueInteractables;
             if (interactables == null || interactables.Count == 0)
-                return JsonHelper.Error("No NPCs on map");
+                return JsonConfig.Error("No NPCs on map");
 
             if (npcIndex < 0 || npcIndex >= interactables.Count)
-                return JsonHelper.Error($"Invalid NPC index: {npcIndex}. Valid range: 0-{interactables.Count - 1}");
+                return JsonConfig.Error($"Invalid NPC index: {npcIndex}. Valid range: 0-{interactables.Count - 1}");
 
             var interactable = interactables[npcIndex];
             if (interactable == null)
-                return JsonHelper.Error("NPC is null");
+                return JsonConfig.Error("NPC is null");
 
             var npc = interactable as DialogueInteractable;
             if (npc == null)
-                return JsonHelper.Error("Interactable is not a DialogueInteractable");
+                return JsonConfig.Error("Interactable is not a DialogueInteractable");
 
             var npcName = npc.DialogueCharacter?.CharacterName ?? "Unknown";
             Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName} at index {npcIndex}");
@@ -871,7 +878,7 @@ namespace AethermancerHarness
 
             if (!IsDialogueOpen())
             {
-                return JsonHelper.Error("Dialogue failed to open");
+                return JsonConfig.Error("Dialogue failed to open");
             }
 
             System.Threading.Thread.Sleep(200);
@@ -879,10 +886,10 @@ namespace AethermancerHarness
 
             if (StateSerializer.IsInSkillSelection())
             {
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = true,
-                    phase = GamePhase.SkillSelection.ToJsonString(),
+                    phase = GamePhase.SkillSelection,
                     transitionedFrom = "dialogue",
                     npc = npcName
                 });
@@ -890,10 +897,10 @@ namespace AethermancerHarness
 
             if (!IsDialogueOpen())
             {
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = true,
-                    phase = GamePhase.Exploration.ToJsonString(),
+                    phase = GamePhase.Exploration,
                     dialogueComplete = true,
                     npc = npcName
                 });
@@ -905,21 +912,21 @@ namespace AethermancerHarness
         public static string ExecuteDialogueChoice(int choiceIndex)
         {
             if (!IsDialogueOpen())
-                return JsonHelper.Error("No dialogue open");
+                return JsonConfig.Error("No dialogue open");
 
             var dialogueInteractable = GetCurrentDialogue();
             var dialogueData = GetCurrentDialogueData();
             var display = UIController.Instance?.DialogueDisplay;
 
             if (dialogueInteractable == null || dialogueData == null || display == null)
-                return JsonHelper.Error("Dialogue state not available");
+                return JsonConfig.Error("Dialogue state not available");
 
             var options = dialogueData.DialogueOptions;
             if (options == null || options.Length == 0)
-                return JsonHelper.Error("No dialogue options available");
+                return JsonConfig.Error("No dialogue options available");
 
             if (choiceIndex < 0 || choiceIndex >= options.Length)
-                return JsonHelper.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{options.Length - 1}");
+                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{options.Length - 1}");
 
             var selectedOptionText = options[choiceIndex];
             Plugin.Log.LogInfo($"ExecuteDialogueChoice: Selecting option {choiceIndex}: '{selectedOptionText}'");
@@ -980,10 +987,10 @@ namespace AethermancerHarness
 
                     if (StateSerializer.IsInEquipmentSelection())
                     {
-                        return JsonHelper.Serialize(new
+                        return JsonConfig.Serialize(new
                         {
                             success = true,
-                            phase = GamePhase.EquipmentSelection.ToJsonString(),
+                            phase = GamePhase.EquipmentSelection,
                             transitionedFrom = "dialogue",
                             state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
                         });
@@ -991,18 +998,18 @@ namespace AethermancerHarness
 
                     if (StateSerializer.IsInSkillSelection())
                     {
-                        return JsonHelper.Serialize(new
+                        return JsonConfig.Serialize(new
                         {
                             success = true,
-                            phase = GamePhase.SkillSelection.ToJsonString(),
+                            phase = GamePhase.SkillSelection,
                             transitionedFrom = "dialogue"
                         });
                     }
 
-                    return JsonHelper.Serialize(new
+                    return JsonConfig.Serialize(new
                     {
                         success = true,
-                        phase = GamePhase.Exploration.ToJsonString(),
+                        phase = GamePhase.Exploration,
                         dialogueComplete = true
                     });
                 }
@@ -1012,10 +1019,10 @@ namespace AethermancerHarness
 
                 if (StateSerializer.IsInEquipmentSelection())
                 {
-                    return JsonHelper.Serialize(new
+                    return JsonConfig.Serialize(new
                     {
                         success = true,
-                        phase = GamePhase.EquipmentSelection.ToJsonString(),
+                        phase = GamePhase.EquipmentSelection,
                         transitionedFrom = "dialogue",
                         state = JObject.Parse(StateSerializer.GetEquipmentSelectionStateJson())
                     });
@@ -1023,20 +1030,20 @@ namespace AethermancerHarness
 
                 if (StateSerializer.IsInSkillSelection())
                 {
-                    return JsonHelper.Serialize(new
+                    return JsonConfig.Serialize(new
                     {
                         success = true,
-                        phase = GamePhase.SkillSelection.ToJsonString(),
+                        phase = GamePhase.SkillSelection,
                         transitionedFrom = "dialogue"
                     });
                 }
 
                 if (!IsDialogueOpen())
                 {
-                    return JsonHelper.Serialize(new
+                    return JsonConfig.Serialize(new
                     {
                         success = true,
-                        phase = GamePhase.Exploration.ToJsonString(),
+                        phase = GamePhase.Exploration,
                         dialogueComplete = true
                     });
                 }
@@ -1046,7 +1053,7 @@ namespace AethermancerHarness
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteDialogueChoice: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = false,
                     error = $"Exception during dialogue choice: {ex.Message}",
@@ -1068,22 +1075,22 @@ namespace AethermancerHarness
         public static string ExecuteMerchantInteract()
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Error("Cannot shop during combat");
+                return JsonConfig.Error("Cannot shop during combat");
 
             if (IsMerchantMenuOpen())
                 return StateSerializer.GetMerchantStateJson();
 
             var map = LevelGenerator.Instance?.Map;
             if (map == null)
-                return JsonHelper.Error("Map not loaded");
+                return JsonConfig.Error("Map not loaded");
 
             var merchantInteractable = map.MerchantInteractable;
             if (merchantInteractable == null)
-                return JsonHelper.Error("No merchant on this map");
+                return JsonConfig.Error("No merchant on this map");
 
             var merchant = merchantInteractable as MerchantInteractable;
             if (merchant == null)
-                return JsonHelper.Error("Merchant is not a MerchantInteractable");
+                return JsonConfig.Error("Merchant is not a MerchantInteractable");
 
             Plugin.Log.LogInfo("ExecuteMerchantInteract: Opening merchant shop");
 
@@ -1106,7 +1113,7 @@ namespace AethermancerHarness
 
             if (!IsMerchantMenuOpen())
             {
-                return JsonHelper.Error("Merchant menu failed to open");
+                return JsonConfig.Error("Merchant menu failed to open");
             }
 
             System.Threading.Thread.Sleep(200);
@@ -1117,7 +1124,7 @@ namespace AethermancerHarness
         public static string ExecuteMerchantClose()
         {
             if (!IsMerchantMenuOpen())
-                return JsonHelper.Error("Merchant menu not open");
+                return JsonConfig.Error("Merchant menu not open");
 
             Plugin.Log.LogInfo("ExecuteMerchantClose: Closing merchant menu");
 
@@ -1131,21 +1138,21 @@ namespace AethermancerHarness
 
             System.Threading.Thread.Sleep(200);
 
-            return JsonHelper.Serialize(new
+            return JsonConfig.Serialize(new
             {
                 success = true,
-                phase = GamePhase.Exploration.ToJsonString()
+                phase = GamePhase.Exploration
             });
         }
 
         public static string ExecuteMerchantChoice(int choiceIndex)
         {
             if (!IsMerchantMenuOpen())
-                return JsonHelper.Error("Merchant menu not open");
+                return JsonConfig.Error("Merchant menu not open");
 
             var merchant = MerchantInteractable.currentMerchant;
             if (merchant == null)
-                return JsonHelper.Error("No active merchant");
+                return JsonConfig.Error("No active merchant");
 
             var stockedItems = merchant.StockedItems;
 
@@ -1158,13 +1165,13 @@ namespace AethermancerHarness
 
             // Otherwise treat as a buy action
             if (choiceIndex < 0 || choiceIndex >= stockedItems.Count)
-                return JsonHelper.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{stockedItems.Count} (last is 'Leave Shop')");
+                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{stockedItems.Count} (last is 'Leave Shop')");
 
             var shopItem = stockedItems[choiceIndex];
 
             if (!merchant.CanBuyItem(shopItem, 1))
             {
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = false,
                     error = "Cannot afford this item",
@@ -1226,11 +1233,11 @@ namespace AethermancerHarness
         public static string ExecuteDifficultyChoice(int choiceIndex)
         {
             if (!StateSerializer.IsInDifficultySelection())
-                return JsonHelper.Error("Not in difficulty selection screen");
+                return JsonConfig.Error("Not in difficulty selection screen");
 
             var menu = UIController.Instance?.DifficultySelectMenu;
             if (menu == null || !menu.IsOpen)
-                return JsonHelper.Error("Difficulty selection menu not available");
+                return JsonConfig.Error("Difficulty selection menu not available");
 
             EDifficulty targetDifficulty;
             switch (choiceIndex)
@@ -1245,13 +1252,13 @@ namespace AethermancerHarness
                     targetDifficulty = EDifficulty.Mythic;
                     break;
                 default:
-                    return JsonHelper.Error($"Invalid difficulty index: {choiceIndex}. Valid: 0=Normal, 1=Heroic, 2=Mythic");
+                    return JsonConfig.Error($"Invalid difficulty index: {choiceIndex}. Valid: 0=Normal, 1=Heroic, 2=Mythic");
             }
 
             var maxUnlocked = ProgressManager.Instance?.UnlockedDifficulty ?? 1;
             if ((int)targetDifficulty > maxUnlocked)
             {
-                return JsonHelper.Serialize(new
+                return JsonConfig.Serialize(new
                 {
                     success = false,
                     error = $"Difficulty '{targetDifficulty}' is not unlocked. Max unlocked level: {maxUnlocked}"
@@ -1299,24 +1306,129 @@ namespace AethermancerHarness
                     if (StateSerializer.IsInMonsterSelection())
                     {
                         Plugin.Log.LogInfo($"ExecuteDifficultyChoice: Monster selection opened with difficulty {targetDifficulty}");
-                        return JsonHelper.Serialize(new
+                        return JsonConfig.Serialize(new
                         {
                             success = true,
                             action = "difficulty_selected",
-                            difficulty = targetDifficulty.ToString(),
-                            phase = GamePhase.MonsterSelection.ToJsonString(),
+                            difficulty = targetDifficulty,
+                            phase = GamePhase.MonsterSelection,
                             state = JObject.Parse(StateSerializer.GetMonsterSelectionStateJson())
                         });
                     }
                 }
 
-                return JsonHelper.Error("Timeout waiting for monster selection after difficulty selection");
+                return JsonConfig.Error("Timeout waiting for monster selection after difficulty selection");
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteDifficultyChoice: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Error($"Exception during difficulty selection: {ex.Message}");
+                return JsonConfig.Error($"Exception during difficulty selection: {ex.Message}");
             }
+        }
+
+        // =====================================================
+        // AETHER SPRING INTERACTION
+        // =====================================================
+
+        public static string ExecuteAetherSpringInteract()
+        {
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonConfig.Error("Cannot interact with aether spring during combat");
+
+            if (StateSerializer.IsInAetherSpringMenu())
+                return StateSerializer.GetAetherSpringStateJson();
+
+            var map = LevelGenerator.Instance?.Map;
+            if (map == null)
+                return JsonConfig.Error("Map not loaded");
+
+            // Find the single aether spring on this map
+            AetherSpringInteractable spring = null;
+            foreach (var s in map.AetherSpringInteractables)
+            {
+                var aetherSpring = s as AetherSpringInteractable;
+                if (aetherSpring != null && !aetherSpring.WasUsedUp)
+                {
+                    spring = aetherSpring;
+                    break;
+                }
+            }
+
+            if (spring == null)
+                return JsonConfig.Error("No available aether spring on this map");
+
+            Plugin.Log.LogInfo("ExecuteAetherSpringInteract: Starting interaction with aether spring");
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                var springPos = spring.transform.position;
+                var playerMovement = PlayerMovementController.Instance;
+                if (playerMovement != null)
+                {
+                    var targetPos = new UnityEngine.Vector3(springPos.x - 2f, springPos.y, springPos.z);
+                    playerMovement.transform.position = targetPos;
+                    Plugin.Log.LogInfo($"ExecuteAetherSpringInteract: Teleported player near spring at ({targetPos.x:F1}, {targetPos.y:F1})");
+                }
+
+                spring.StartBaseInteraction();
+            });
+
+            var startTime = DateTime.Now;
+            while (!StateSerializer.IsInAetherSpringMenu() && !TimedOut(startTime, 3000))
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+
+            if (!StateSerializer.IsInAetherSpringMenu())
+            {
+                return JsonConfig.Error("Aether spring menu failed to open");
+            }
+
+            System.Threading.Thread.Sleep(200);
+            return StateSerializer.GetAetherSpringStateJson();
+        }
+
+        public static string ExecuteAetherSpringChoice(int choiceIndex)
+        {
+            if (!StateSerializer.IsInAetherSpringMenu())
+                return JsonConfig.Error("No aether spring menu open");
+
+            if (choiceIndex < 0 || choiceIndex > 1)
+                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Must be 0 or 1");
+
+            var menu = GetAetherSpringMenu();
+            if (menu == null)
+                return JsonConfig.Error("Aether spring menu not available");
+
+            Plugin.Log.LogInfo($"ExecuteAetherSpringChoice: Selecting boon at index {choiceIndex}");
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                // Navigate to the correct selection (0 = left, 1 = right)
+                if (choiceIndex == 0)
+                    menu.OnGoLeft();
+                else
+                    menu.OnGoRight();
+
+                // Confirm the selection
+                menu.OnConfirm();
+            });
+
+            var startTime = DateTime.Now;
+            while (StateSerializer.IsInAetherSpringMenu() && !TimedOut(startTime, 3000))
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+
+            System.Threading.Thread.Sleep(300);
+
+            return JsonConfig.Serialize(new
+            {
+                success = true,
+                action = "boon_selected",
+                choiceIndex = choiceIndex,
+                phase = GamePhase.Exploration
+            });
         }
 
     }

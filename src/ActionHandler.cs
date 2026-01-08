@@ -23,6 +23,8 @@ namespace AethermancerHarness
         internal static readonly FieldInfo MerchantMenuField;
         internal static readonly FieldInfo DialogueCurrentField;
         internal static readonly FieldInfo DialogueDataField;
+        internal static readonly FieldInfo AetherSpringMenuField;
+        internal static readonly FieldInfo AetherSpringField;
 
         static ActionHandler()
         {
@@ -53,6 +55,12 @@ namespace AethermancerHarness
 
             DialogueDataField = typeof(DialogueDisplay).GetField("currentDialogueData",
                 BindingFlags.NonPublic | BindingFlags.Instance);
+
+            AetherSpringMenuField = typeof(UIController).GetField("AetherSpringMenu",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+
+            AetherSpringField = typeof(AetherSpringMenu).GetField("AetherSpring",
+                BindingFlags.NonPublic | BindingFlags.Instance);
         }
 
         // =====================================================
@@ -71,6 +79,20 @@ namespace AethermancerHarness
             var ui = UIController.Instance;
             if (ui == null) return null;
             return MerchantMenuField?.GetValue(ui) as MerchantMenu;
+        }
+
+        internal static AetherSpringMenu GetAetherSpringMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+            return AetherSpringMenuField?.GetValue(ui) as AetherSpringMenu;
+        }
+
+        internal static AetherSpringInteractable GetCurrentAetherSpring()
+        {
+            var menu = GetAetherSpringMenu();
+            if (menu == null) return null;
+            return AetherSpringField?.GetValue(menu) as AetherSpringInteractable;
         }
 
         internal static DialogueInteractable GetCurrentDialogue()

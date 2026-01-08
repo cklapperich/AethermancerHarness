@@ -15,27 +15,27 @@ namespace AethermancerHarness
         public static string ExecuteVoidBlitz(int monsterGroupIndex, int monsterIndex = 0)
         {
             if (GameStateManager.Instance?.IsCombat ?? true)
-                return JsonHelper.Error("Cannot void blitz during combat");
+                return JsonConfig.Error("Cannot void blitz during combat");
 
             if (!GameStateManager.Instance.IsExploring)
-                return JsonHelper.Error("Must be in exploration mode to void blitz");
+                return JsonConfig.Error("Must be in exploration mode to void blitz");
 
             var groups = ExplorationController.Instance?.EncounterGroups;
             if (groups == null || groups.Count == 0)
-                return JsonHelper.Error("No monster groups available");
+                return JsonConfig.Error("No monster groups available");
 
             if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonHelper.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
+                return JsonConfig.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
 
             var targetGroup = groups[monsterGroupIndex];
             if (targetGroup == null)
-                return JsonHelper.Error("Monster group is null");
+                return JsonConfig.Error("Monster group is null");
 
             if (targetGroup.EncounterDefeated)
-                return JsonHelper.Error("Monster group already defeated");
+                return JsonConfig.Error("Monster group already defeated");
 
             if (targetGroup.OverworldMonsters == null || targetGroup.OverworldMonsters.Count == 0)
-                return JsonHelper.Error("Monster group has no overworld monsters");
+                return JsonConfig.Error("Monster group has no overworld monsters");
 
             // Find target monster
             OverworldMonster targetMonster = null;
@@ -59,7 +59,7 @@ namespace AethermancerHarness
             }
 
             if (targetMonster == null)
-                return JsonHelper.Error("No active monsters in group");
+                return JsonConfig.Error("No active monsters in group");
 
             Plugin.Log.LogInfo($"ExecuteVoidBlitz: Targeting group {monsterGroupIndex}, monster {targetMonster.name}");
 
@@ -79,7 +79,7 @@ namespace AethermancerHarness
 
             Plugin.Log.LogInfo("ExecuteVoidBlitz: Void blitz triggered successfully");
 
-            return JsonHelper.Serialize(new
+            return JsonConfig.Serialize(new
             {
                 success = true,
                 action = "void_blitz",
@@ -96,26 +96,26 @@ namespace AethermancerHarness
         public static string ExecuteStartCombat(int monsterGroupIndex)
         {
             if (GameStateManager.Instance?.IsCombat ?? true)
-                return JsonHelper.Error("Already in combat");
+                return JsonConfig.Error("Already in combat");
 
             var groups = ExplorationController.Instance?.EncounterGroups;
             if (groups == null || groups.Count == 0)
-                return JsonHelper.Error("No monster groups available");
+                return JsonConfig.Error("No monster groups available");
 
             if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonHelper.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
+                return JsonConfig.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
 
             var targetGroup = groups[monsterGroupIndex];
             if (targetGroup == null)
-                return JsonHelper.Error("Monster group is null");
+                return JsonConfig.Error("Monster group is null");
 
             if (targetGroup.EncounterDefeated)
-                return JsonHelper.Error("Monster group already defeated");
+                return JsonConfig.Error("Monster group already defeated");
 
             Plugin.Log.LogInfo($"ExecuteStartCombat: Starting combat with group {monsterGroupIndex}");
             targetGroup.StartCombat(aetherBlitzed: false, null, ignoreGameState: true);
 
-            return JsonHelper.Serialize(new { success = true, action = "start_combat", monsterGroupIndex });
+            return JsonConfig.Serialize(new { success = true, action = "start_combat", monsterGroupIndex });
         }
 
         // =====================================================
@@ -125,11 +125,11 @@ namespace AethermancerHarness
         public static string ExecuteTeleport(float x, float y, float z)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Error("Cannot teleport during combat");
+                return JsonConfig.Error("Cannot teleport during combat");
 
             var playerMovement = PlayerMovementController.Instance;
             if (playerMovement == null)
-                return JsonHelper.Error("PlayerMovementController not available");
+                return JsonConfig.Error("PlayerMovementController not available");
 
             var oldPos = playerMovement.transform.position;
             var newPos = new UnityEngine.Vector3(x, y, z);
@@ -137,7 +137,7 @@ namespace AethermancerHarness
 
             Plugin.Log.LogInfo($"Teleported player from ({oldPos.x:F1}, {oldPos.y:F1}, {oldPos.z:F1}) to ({x:F1}, {y:F1}, {z:F1})");
 
-            return JsonHelper.Serialize(new
+            return JsonConfig.Serialize(new
             {
                 success = true,
                 from = new { x = (double)oldPos.x, y = (double)oldPos.y, z = (double)oldPos.z },
@@ -152,7 +152,7 @@ namespace AethermancerHarness
         public static string ExecuteInteract()
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonHelper.Error("Cannot interact during combat");
+                return JsonConfig.Error("Cannot interact during combat");
 
             // Check for start run interactable in Pilgrim's Rest
             var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
@@ -197,23 +197,76 @@ namespace AethermancerHarness
 
                     if (StateSerializer.IsInMonsterSelection())
                     {
-                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact", type = InteractableType.MonsterShrine.ToJsonString() });
+                        return JsonConfig.Serialize(new { success = true, action = "shrine_interact", type = InteractableType.MonsterShrine });
                     }
                     else
                     {
-                        return JsonHelper.Serialize(new { success = true, action = "shrine_interact_pending", type = InteractableType.MonsterShrine.ToJsonString(), note = "Shrine triggered, menu may still be opening" });
+                        return JsonConfig.Serialize(new { success = true, action = "shrine_interact_pending", type = InteractableType.MonsterShrine, note = "Shrine triggered, menu may still be opening" });
                     }
                 }
                 catch (System.Exception ex)
                 {
                     Plugin.Log.LogError($"ExecuteInteract: Shrine interaction failed: {ex.Message}");
-                    return JsonHelper.Error($"Shrine interaction failed: {ex.Message}");
+                    return JsonConfig.Error($"Shrine interaction failed: {ex.Message}");
                 }
             }
 
             // Fallback to generic interact for other interactables
             PlayerController.Instance?.OnInteract();
-            return JsonHelper.Serialize(new { success = true, action = "interact" });
+            return JsonConfig.Serialize(new { success = true, action = "interact" });
+        }
+
+        // =====================================================
+        // LOOT ALL (BREAK DESTRUCTIBLES + COLLECT)
+        // =====================================================
+
+        public static string ExecuteLootAll()
+        {
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonConfig.Error("Cannot loot during combat");
+
+            int brokenCount = 0;
+            string error = null;
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                try
+                {
+                    var propGen = LevelGenerator.Instance?.PropGenerator;
+                    if (propGen == null)
+                    {
+                        error = "PropGenerator not available";
+                        return;
+                    }
+
+                    // Break all destructibles (boxes, plants, barrels)
+                    var breakables = propGen.GeneratedBreakableObjects;
+                    if (breakables != null)
+                    {
+                        foreach (var breakable in breakables)
+                        {
+                            if (breakable != null && breakable.CanBeInteracted())
+                            {
+                                breakable.StartBaseInteraction();
+                                brokenCount++;
+                            }
+                        }
+                    }
+
+                    // Instantly collect all dropped loot on the map
+                    propGen.CollectCollectibles();
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
+
+            Plugin.Log.LogInfo($"ExecuteLootAll: Broke {brokenCount} destructibles and collected loot");
+            return JsonConfig.Serialize(new { success = true, action = "loot_all", brokenCount });
         }
 
         /// <summary>
@@ -249,12 +302,12 @@ namespace AethermancerHarness
                     }
                 }
 
-                return JsonHelper.Error("Timeout waiting for run start menu to open");
+                return JsonConfig.Error("Timeout waiting for run start menu to open");
             }
             catch (System.Exception ex)
             {
                 Plugin.Log.LogError($"ExecuteStartRunInteraction: Exception - {ex.Message}\n{ex.StackTrace}");
-                return JsonHelper.Error($"Exception during run start: {ex.Message}");
+                return JsonConfig.Error($"Exception during run start: {ex.Message}");
             }
         }
     }

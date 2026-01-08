@@ -13,6 +13,7 @@ namespace AethermancerHarness
         Exploration,
         Dialogue,
         Merchant,
+        AetherSpring,
         EndOfRun,
         Timeout
     }
@@ -86,37 +87,8 @@ namespace AethermancerHarness
         Normal
     }
 
-    /// <summary>
-    /// Extension methods for converting enums to their JSON string representations.
-    /// </summary>
     public static class EnumExtensions
     {
-        /// <summary>
-        /// Converts PascalCase to SCREAMING_SNAKE_CASE.
-        /// </summary>
-        private static string ToScreamingSnakeCase(string pascalCase)
-        {
-            if (string.IsNullOrEmpty(pascalCase)) return pascalCase;
-            var sb = new System.Text.StringBuilder();
-            for (int i = 0; i < pascalCase.Length; i++)
-            {
-                if (i > 0 && char.IsUpper(pascalCase[i]))
-                    sb.Append('_');
-                sb.Append(char.ToUpper(pascalCase[i]));
-            }
-            return sb.ToString();
-        }
-
-        public static string ToJsonString(this GamePhase phase) => ToScreamingSnakeCase(phase.ToString());
-        public static string ToJsonString(this InteractableType type) => ToScreamingSnakeCase(type.ToString());
-        public static string ToJsonString(this InputReadyStatus status) => ToScreamingSnakeCase(status.ToString());
-        public static string ToJsonString(this CombatResult result) => ToScreamingSnakeCase(result.ToString());
-        public static string ToJsonString(this ChoiceType type) => ToScreamingSnakeCase(type.ToString());
-        public static string ToJsonString(this ShrineType type) => ToScreamingSnakeCase(type.ToString());
-
-        /// <summary>
-        /// Converts EShrineState to ShrineType.
-        /// </summary>
         public static ShrineType ToShrineType(this EShrineState state)
         {
             switch (state)

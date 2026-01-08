@@ -289,12 +289,3 @@ Monsters have traits (passive abilities) exposed via the `/state` endpoint:
 - `isAura`: True for aura traits that affect the whole team
 - Traits are available for both player monsters and enemies
 
-## Rebuilding the Plugin
-
-After code changes:
-```bash
-cd ~/gitrepos/AethermancerHarness
-./build.sh
-```
-
-Then restart the game for changes to take effect.

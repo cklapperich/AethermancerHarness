@@ -41,26 +41,26 @@ namespace AethermancerHarness
         public static string GetInputReadyStatus()
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return InputReadyStatus.NotInCombat.ToJsonString();
+                return InputReadyStatus.NotInCombat.ToString();
 
             var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
             if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return $"{InputReadyStatus.CombatEnded.ToJsonString()}:{currentState}";
+                return $"{InputReadyStatus.CombatEnded.ToString()}:{currentState}";
 
             var cc = CombatController.Instance;
             if (cc == null)
-                return InputReadyStatus.NoCombatController.ToJsonString();
+                return InputReadyStatus.NoCombatController.ToString();
 
             if (cc.CurrentMonster == null)
-                return InputReadyStatus.NoCurrentMonster.ToJsonString();
+                return InputReadyStatus.NoCurrentMonster.ToString();
             if (!cc.CurrentMonster.BelongsToPlayer)
-                return $"{InputReadyStatus.EnemyTurn.ToJsonString()}:{cc.CurrentMonster.Name}";
+                return $"{InputReadyStatus.EnemyTurn.ToString()}:{cc.CurrentMonster.Name}";
             if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return $"{InputReadyStatus.TriggersPending.ToJsonString()}:{CombatTimeline.Instance.TriggerStack.Count}";
+                return $"{InputReadyStatus.TriggersPending.ToString()}:{CombatTimeline.Instance.TriggerStack.Count}";
             if (cc.CurrentMonster.State?.ActionInstance != null)
-                return $"{InputReadyStatus.ActionExecuting.ToJsonString()}:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
+                return $"{InputReadyStatus.ActionExecuting.ToString()}:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
 
-            return InputReadyStatus.Ready.ToJsonString();
+            return InputReadyStatus.Ready.ToString();
         }
 
         public static bool WaitForReady(int timeoutMs = 30000)
@@ -143,7 +143,7 @@ namespace AethermancerHarness
         public static string ExecuteCombatAction(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
         {
             if (!IsReadyForInput())
-                return JsonHelper.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                return JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
 
             var cc = CombatController.Instance;
 
@@ -152,15 +152,15 @@ namespace AethermancerHarness
             if (!string.IsNullOrEmpty(actorName))
             {
                 if (actorIndex >= 0)
-                    return JsonHelper.Error("Cannot specify both actorIndex and actorName");
+                    return JsonConfig.Error("Cannot specify both actorIndex and actorName");
                 var (idx, err) = ResolveActorByName(actorName, cc);
                 if (err != null)
-                    return JsonHelper.Error(err);
+                    return JsonConfig.Error(err);
                 resolvedActorIndex = idx;
             }
 
             if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Error($"Invalid actor index: {resolvedActorIndex}");
+                return JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
 
             var actor = cc.PlayerMonsters[resolvedActorIndex];
 
@@ -169,24 +169,24 @@ namespace AethermancerHarness
             if (!string.IsNullOrEmpty(skillName))
             {
                 if (skillIndex >= 0)
-                    return JsonHelper.Error("Cannot specify both skillIndex and skillName");
+                    return JsonConfig.Error("Cannot specify both skillIndex and skillName");
                 var (idx, err) = ResolveSkillByName(skillName, actor);
                 if (err != null)
-                    return JsonHelper.Error(err);
+                    return JsonConfig.Error(err);
                 resolvedSkillIndex = idx;
             }
 
             if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Error($"Invalid skill index: {resolvedSkillIndex}");
+                return JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
 
             var skill = actor.SkillManager.Actions[resolvedSkillIndex];
 
             if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Error($"Skill cannot be used: {skill.Action.Name}");
+                return JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
 
             var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
             if (target == null)
-                return JsonHelper.Error(error);
+                return JsonConfig.Error(error);
 
             Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
             var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
@@ -198,28 +198,28 @@ namespace AethermancerHarness
         public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
         {
             if (!IsReadyForInput())
-                return JsonHelper.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                return JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
 
             var cc = CombatController.Instance;
             var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
             if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Error($"Invalid consumable index: {consumableIndex}");
+                return JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
 
             var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
 
             if (currentMonster == null)
-                return JsonHelper.Error("No current monster to use consumable");
+                return JsonConfig.Error("No current monster to use consumable");
 
             consumable.Owner = currentMonster;
 
             if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
+                return JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
 
             var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
             if (target == null)
-                return JsonHelper.Error(error);
+                return JsonConfig.Error(error);
 
             Plugin.Log.LogInfo($"Using consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
             var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
@@ -248,7 +248,7 @@ namespace AethermancerHarness
                 {
                     ["success"] = true,
                     ["action"] = actionName,
-                    ["combatResult"] = CombatResult.Defeat.ToJsonString(),
+                    ["combatResult"] = CombatResult.Defeat.ToString(),
                     ["state"] = JObject.Parse(StateSerializer.ToJson())
                 };
                 return result.ToString(Newtonsoft.Json.Formatting.None);
@@ -292,7 +292,7 @@ namespace AethermancerHarness
         public static string ExecutePreview(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Error("Not in combat");
+                return JsonConfig.Error("Not in combat");
 
             var cc = CombatController.Instance;
 
@@ -301,15 +301,15 @@ namespace AethermancerHarness
             if (!string.IsNullOrEmpty(actorName))
             {
                 if (actorIndex >= 0)
-                    return JsonHelper.Error("Cannot specify both actorIndex and actorName");
+                    return JsonConfig.Error("Cannot specify both actorIndex and actorName");
                 var (idx, err) = ResolveActorByName(actorName, cc);
                 if (err != null)
-                    return JsonHelper.Error(err);
+                    return JsonConfig.Error(err);
                 resolvedActorIndex = idx;
             }
 
             if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Error($"Invalid actor index: {resolvedActorIndex}");
+                return JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
 
             var actor = cc.PlayerMonsters[resolvedActorIndex];
 
@@ -318,24 +318,24 @@ namespace AethermancerHarness
             if (!string.IsNullOrEmpty(skillName))
             {
                 if (skillIndex >= 0)
-                    return JsonHelper.Error("Cannot specify both skillIndex and skillName");
+                    return JsonConfig.Error("Cannot specify both skillIndex and skillName");
                 var (idx, err) = ResolveSkillByName(skillName, actor);
                 if (err != null)
-                    return JsonHelper.Error(err);
+                    return JsonConfig.Error(err);
                 resolvedSkillIndex = idx;
             }
 
             if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Error($"Invalid skill index: {resolvedSkillIndex}");
+                return JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
 
             var skill = actor.SkillManager.Actions[resolvedSkillIndex];
 
             if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Error($"Skill cannot be used: {skill.Action.Name}");
+                return JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
 
             var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
             if (target == null)
-                return JsonHelper.Error(error);
+                return JsonConfig.Error(error);
 
             Plugin.Log.LogInfo($"Previewing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
             return ExecutePreviewInternal(cc, actor, skill, target);
@@ -344,28 +344,28 @@ namespace AethermancerHarness
         public static string ExecuteConsumablePreview(int consumableIndex, int targetIndex)
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Error("Not in combat");
+                return JsonConfig.Error("Not in combat");
 
             var cc = CombatController.Instance;
             var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
             if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Error($"Invalid consumable index: {consumableIndex}");
+                return JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
 
             var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
 
             if (currentMonster == null)
-                return JsonHelper.Error("No current monster for preview");
+                return JsonConfig.Error("No current monster for preview");
 
             consumable.Owner = currentMonster;
 
             if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
+                return JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
 
             var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
             if (target == null)
-                return JsonHelper.Error(error);
+                return JsonConfig.Error(error);
 
             Plugin.Log.LogInfo($"Previewing consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
             return ExecutePreviewInternal(cc, currentMonster, consumable, target);
@@ -585,7 +585,7 @@ namespace AethermancerHarness
         public static string GetEnemyActions()
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Error("Not in combat");
+                return JsonConfig.Error("Not in combat");
 
             var cc = CombatController.Instance;
             var enemies = new JArray();
