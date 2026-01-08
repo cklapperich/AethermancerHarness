@@ -375,6 +375,8 @@ namespace AethermancerHarness
         public List<MonsterChoice> Choices { get; set; }
         public int Gold { get; set; }
         public List<MonsterDetails> Party { get; set; }
+        public int ShrineRerollsAvailable { get; set; }
+        public bool CanReroll { get; set; }
     }
 
     public class EquipmentSelectionState : BaseState

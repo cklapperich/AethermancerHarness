@@ -184,18 +184,6 @@ namespace AethermancerHarness
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
-                    case "/skill-select":
-                        if (method == "POST")
-                        {
-                            var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleSkillSelect(body));
-                            responseBody = result;
-                        }
-                        else
-                            (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
-                        break;
-
                     case "/npc/interact":
                         if (method == "POST")
                         {
@@ -221,28 +209,6 @@ namespace AethermancerHarness
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
-                    case "/merchant/interact":
-                        if (method == "POST")
-                        {
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteMerchantInteract());
-                            responseBody = result;
-                        }
-                        else
-                            (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
-                        break;
-
-                    case "/aether-spring/interact":
-                        if (method == "POST")
-                        {
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteAetherSpringInteract());
-                            responseBody = result;
-                        }
-                        else
-                            (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
-                        break;
-
                     case "/debug/interactables":
                         {
                             string result = null;
@@ -259,9 +225,8 @@ namespace AethermancerHarness
                             {
                                 "/health", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
-                                "/exploration/interact", "/exploration/loot-all", "/skill-select",
-                                "/npc/interact", "/choice", "/merchant/interact", "/aether-spring/interact",
-                                "/debug/interactables"
+                                "/exploration/interact", "/exploration/loot-all", "/npc/interact",
+                                "/choice", "/debug/interactables"
                             }
                         });
                         statusCode = 404;
@@ -379,21 +344,6 @@ namespace AethermancerHarness
             if (useVoidBlitz)
                 return ActionHandler.ExecuteVoidBlitz(monsterGroupIndex, monsterIndex);
             return ActionHandler.ExecuteStartCombat(monsterGroupIndex);
-        }
-
-        private string HandleSkillSelect(string body)
-        {
-            var json = JsonConfig.Parse(body);
-            var reroll = JsonConfig.Value(json, "reroll", false);
-
-            if (reroll)
-                return ActionHandler.ExecuteSkillSelection(-1, reroll: true);
-
-            var skillIndex = JsonConfig.Value(json, "skillIndex", -1);
-            if (skillIndex < -1 || skillIndex > 2)
-                return JsonConfig.Error($"Invalid skillIndex: {skillIndex}. Use 0-2 for skills, -1 for max health.");
-
-            return ActionHandler.ExecuteSkillSelection(skillIndex, reroll: false);
         }
 
         private string HandleNpcInteract(string body)

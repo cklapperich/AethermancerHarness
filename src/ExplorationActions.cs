@@ -211,6 +211,111 @@ namespace AethermancerHarness
                 }
             }
 
+            // Check for merchant - teleport and interact
+            var map = LevelGenerator.Instance?.Map;
+            if (map != null)
+            {
+                var merchantInteractable = map.MerchantInteractable;
+                if (merchantInteractable != null)
+                {
+                    var merchant = merchantInteractable as MerchantInteractable;
+                    if (merchant != null)
+                    {
+                        Plugin.Log.LogInfo("ExecuteInteract: Found merchant, teleporting and interacting");
+                        try
+                        {
+                            Plugin.RunOnMainThreadAndWait(() =>
+                            {
+                                var merchantPos = merchant.transform.position;
+                                var playerMovement = PlayerMovementController.Instance;
+                                if (playerMovement != null)
+                                {
+                                    var targetPos = new UnityEngine.Vector3(merchantPos.x - 2f, merchantPos.y, merchantPos.z);
+                                    playerMovement.transform.position = targetPos;
+                                    Plugin.Log.LogInfo($"ExecuteInteract: Teleported player near merchant at ({targetPos.x:F1}, {targetPos.y:F1})");
+                                }
+
+                                merchant.StartMerchantInteraction();
+                            });
+
+                            // Wait for merchant menu to open
+                            var startTime = DateTime.Now;
+                            while (!ActionHandler.IsMerchantMenuOpen() && !TimedOut(startTime, 3000))
+                            {
+                                System.Threading.Thread.Sleep(50);
+                            }
+
+                            if (ActionHandler.IsMerchantMenuOpen())
+                            {
+                                System.Threading.Thread.Sleep(200);
+                                return JsonConfig.Serialize(new { success = true, action = "merchant_interact", type = InteractableType.Merchant });
+                            }
+                            else
+                            {
+                                return JsonConfig.Serialize(new { success = true, action = "merchant_interact_pending", type = InteractableType.Merchant, note = "Merchant triggered, menu may still be opening" });
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Plugin.Log.LogError($"ExecuteInteract: Merchant interaction failed: {ex.Message}");
+                            return JsonConfig.Error($"Merchant interaction failed: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Check for aether spring - teleport and interact
+                var aetherSpringInteractables = map.AetherSpringInteractables;
+                if (aetherSpringInteractables != null)
+                {
+                    foreach (var s in aetherSpringInteractables)
+                    {
+                        var spring = s as AetherSpringInteractable;
+                        if (spring != null && !spring.WasUsedUp)
+                        {
+                            Plugin.Log.LogInfo("ExecuteInteract: Found unused aether spring, teleporting and interacting");
+                            try
+                            {
+                                Plugin.RunOnMainThreadAndWait(() =>
+                                {
+                                    var springPos = spring.transform.position;
+                                    var playerMovement = PlayerMovementController.Instance;
+                                    if (playerMovement != null)
+                                    {
+                                        var targetPos = new UnityEngine.Vector3(springPos.x - 2f, springPos.y, springPos.z);
+                                        playerMovement.transform.position = targetPos;
+                                        Plugin.Log.LogInfo($"ExecuteInteract: Teleported player near aether spring at ({targetPos.x:F1}, {targetPos.y:F1})");
+                                    }
+
+                                    spring.StartBaseInteraction();
+                                });
+
+                                // Wait for aether spring menu to open
+                                var startTime = DateTime.Now;
+                                while (!StateSerializer.IsInAetherSpringMenu() && !TimedOut(startTime, 3000))
+                                {
+                                    System.Threading.Thread.Sleep(50);
+                                }
+
+                                if (StateSerializer.IsInAetherSpringMenu())
+                                {
+                                    System.Threading.Thread.Sleep(200);
+                                    return JsonConfig.Serialize(new { success = true, action = "aether_spring_interact", type = InteractableType.AetherSpring });
+                                }
+                                else
+                                {
+                                    return JsonConfig.Serialize(new { success = true, action = "aether_spring_interact_pending", type = InteractableType.AetherSpring, note = "Aether spring triggered, menu may still be opening" });
+                                }
+                            }
+                            catch (System.Exception ex)
+                            {
+                                Plugin.Log.LogError($"ExecuteInteract: Aether spring interaction failed: {ex.Message}");
+                                return JsonConfig.Error($"Aether spring interaction failed: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+            }
+
             // Fallback to generic interact for other interactables
             PlayerController.Instance?.OnInteract();
             return JsonConfig.Serialize(new { success = true, action = "interact" });

@@ -279,16 +279,40 @@ Teleport player to coordinates.
 
 **`POST /exploration/interact`**
 
-Interact with nearby interactable (chests, shrines, NPCs, etc.).
+Interact with nearby interactables. Automatically detects and handles:
+- Monster shrines
+- Merchants (opens shop)
+- Aether springs (opens boon selection)
+- Generic interactables (chests, etc.)
 
 **Request Body:** Empty
 
-**Response:**
+**Response Examples:**
+
+Shrine interaction:
 ```json
 {
   "success": true,
   "action": "shrine_interact",
   "type": "MonsterShrine"
+}
+```
+
+Merchant interaction:
+```json
+{
+  "success": true,
+  "action": "merchant_interact",
+  "type": "Merchant"
+}
+```
+
+Aether spring interaction:
+```json
+{
+  "success": true,
+  "action": "aether_spring_interact",
+  "type": "AetherSpring"
 }
 ```
 
@@ -315,34 +339,11 @@ Break all destructibles and collect loot on the current map.
 
 ## Selection Endpoints
 
-### Skill Selection
-
-**`POST /skill-select`**
-
-Select a skill or bonus after combat level-up.
-
-**Request Body:**
-```json
-{
-  "skillIndex": 0,
-  "reroll": false
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `skillIndex` | int | 0-2 for skills, -1 for max health bonus |
-| `reroll` | bool | Use reroll instead of selecting (optional) |
-
-**Response:** Full game state
-
----
-
 ### Universal Choice Handler
 
 **`POST /choice`**
 
-Handle choices across all contexts (dialogue, difficulty, monster selection, equipment, merchant, aether spring).
+Handle choices across all contexts (dialogue, difficulty, monster selection, equipment, merchant, aether spring, skill selection).
 
 **Request Body:**
 ```json
@@ -358,6 +359,15 @@ Handle choices across all contexts (dialogue, difficulty, monster selection, equ
 | `shift` | string | `normal` or `shifted` (monster selection only) |
 
 The endpoint auto-routes based on current game phase.
+
+**Skill Selection Context:**
+- `choiceIndex` 0-2: Select skill at index
+- `choiceIndex` 3: Select max health bonus
+- `choiceIndex` -1: Reroll skills (if rerolls available)
+
+**Monster Selection Context:**
+- `choiceIndex` 0-N: Select monster at index
+- `choiceIndex` -1: Reroll monsters (if shrine rerolls available and in normal shrine)
 
 ---
 
@@ -397,17 +407,9 @@ Select a dialogue option. (Alias for `/choice` in dialogue context)
 
 ## Merchant Endpoints
 
-### Merchant Interact
+### Open Merchant Shop
 
-**`POST /merchant/interact`**
-
-Open merchant shop interface.
-
-**Request Body:** Empty
-
-**Response:** Merchant state with available items
-
----
+Use `/exploration/interact` to automatically find and open the merchant shop.
 
 ### Purchase Item
 
@@ -421,17 +423,9 @@ Equipment purchases transition to equipment selection phase.
 
 ## Aether Spring Endpoints
 
-### Aether Spring Interact
+### Open Aether Spring
 
-**`POST /aether-spring/interact`**
-
-Open aether spring boon selection.
-
-**Request Body:** Empty
-
-**Response:** Aether spring state with available boons
-
----
+Use `/exploration/interact` to automatically find and open the aether spring boon selection.
 
 ### Select Boon
 

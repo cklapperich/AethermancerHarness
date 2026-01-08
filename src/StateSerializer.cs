@@ -277,7 +277,10 @@ namespace AethermancerHarness
                 CurrentShift = selection.CurrentShift.ToString(),
                 Choices = choices,
                 Gold = InventoryManager.Instance?.Gold ?? 0,
-                Party = BuildDetailedPartyList()
+                Party = BuildDetailedPartyList(),
+                ShrineRerollsAvailable = InventoryManager.Instance?.ShrineRerolls ?? 0,
+                CanReroll = (InventoryManager.Instance?.ShrineRerolls ?? 0) > 0
+                            && menu.ShrineSelectionState == EShrineState.NormalShrineSelection
             });
         }
 

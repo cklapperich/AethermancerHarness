@@ -232,14 +232,15 @@ namespace AethermancerHarness
             return result.ToString(Newtonsoft.Json.Formatting.None);
         }
 
-        public static string ExecuteSkillSelection(int skillIndex, bool reroll = false)
+        private static string ExecuteSkillSelectionChoice(int choiceIndex)
         {
             if (!StateSerializer.IsInSkillSelection())
                 return JsonConfig.Error("Not in skill selection screen");
 
             var skillSelectMenu = UIController.Instance.PostCombatMenu.SkillSelectMenu;
 
-            if (reroll)
+            // Handle reroll (choiceIndex == -1)
+            if (choiceIndex == -1)
             {
                 if (InventoryManager.Instance.SkillRerolls <= 0)
                     return JsonConfig.Error("No skill rerolls available");
@@ -251,7 +252,7 @@ namespace AethermancerHarness
                     {
                         menuList.SelectByIndex(i);
                         TriggerMenuConfirm(menuList);
-                        Plugin.Log.LogInfo("ExecuteSkillSelection: Rerolled skills");
+                        Plugin.Log.LogInfo("ExecuteSkillSelectionChoice: Rerolled skills");
                         System.Threading.Thread.Sleep(500);
                         return StateSerializer.GetSkillSelectionStateJson();
                     }
@@ -259,7 +260,8 @@ namespace AethermancerHarness
                 return JsonConfig.Error("Could not find reroll button");
             }
 
-            if (skillIndex == -1)
+            // Handle max health bonus (choiceIndex == 3)
+            if (choiceIndex == 3)
             {
                 var menuList = skillSelectMenu.MenuList;
                 for (int i = 0; i < menuList.List.Count; i++)
@@ -268,7 +270,7 @@ namespace AethermancerHarness
                     {
                         menuList.SelectByIndex(i);
                         TriggerMenuConfirm(menuList);
-                        Plugin.Log.LogInfo("ExecuteSkillSelection: Selected max health bonus");
+                        Plugin.Log.LogInfo("ExecuteSkillSelectionChoice: Selected max health bonus");
                         System.Threading.Thread.Sleep(500);
                         return WaitForPostCombatComplete();
                     }
@@ -276,21 +278,22 @@ namespace AethermancerHarness
                 return JsonConfig.Error("Max health option not available");
             }
 
-            if (skillIndex >= 0 && skillIndex <= 2)
+            // Handle skill selection (choiceIndex 0-2)
+            if (choiceIndex >= 0 && choiceIndex <= 2)
             {
                 var menuList = skillSelectMenu.MenuList;
-                if (skillIndex < menuList.List.Count)
+                if (choiceIndex < menuList.List.Count)
                 {
-                    menuList.SelectByIndex(skillIndex);
+                    menuList.SelectByIndex(choiceIndex);
                     TriggerMenuConfirm(menuList);
-                    Plugin.Log.LogInfo($"ExecuteSkillSelection: Selected skill at index {skillIndex}");
+                    Plugin.Log.LogInfo($"ExecuteSkillSelectionChoice: Selected skill at index {choiceIndex}");
                     System.Threading.Thread.Sleep(500);
                     return WaitForPostCombatComplete();
                 }
-                return JsonConfig.Error($"Invalid skill index: {skillIndex}");
+                return JsonConfig.Error($"Invalid skill index: {choiceIndex}");
             }
 
-            return JsonConfig.Error($"Invalid skill index: {skillIndex}. Use 0-2 for skills, -1 for max health.");
+            return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Use 0-2 for skills, 3 for max health, -1 for reroll.");
         }
 
         // =====================================================
@@ -299,6 +302,13 @@ namespace AethermancerHarness
 
         public static string ExecuteChoice(int choiceIndex, string shift = null)
         {
+            // Check skill selection
+            if (StateSerializer.IsInSkillSelection())
+            {
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to skill selection handler (index {choiceIndex})");
+                return ExecuteSkillSelectionChoice(choiceIndex);
+            }
+
             // Check equipment selection first (after picking equipment from dialogue/loot)
             if (StateSerializer.IsInEquipmentSelection())
             {
@@ -359,6 +369,51 @@ namespace AethermancerHarness
 
             if (displayedMonsters == null || displayedMonsters.Count == 0)
                 return JsonConfig.Error("No monsters available");
+
+            // Handle reroll (choiceIndex == -1)
+            if (choiceIndex == -1)
+            {
+                var shrineRerolls = InventoryManager.Instance?.ShrineRerolls ?? 0;
+                var shrineState = menu.ShrineSelectionState;
+
+                if (shrineRerolls <= 0)
+                    return JsonConfig.Error("No shrine rerolls available");
+
+                if (shrineState != EShrineState.NormalShrineSelection)
+                    return JsonConfig.Error("Reroll not available for this shrine type");
+
+                Plugin.Log.LogInfo("ExecuteMonsterSelectionChoice: Rerolling monsters");
+
+                try
+                {
+                    Plugin.RunOnMainThreadAndWait(() =>
+                    {
+                        // Remove a shrine reroll
+                        InventoryManager.Instance.RemoveShrineReroll();
+
+                        // Trigger monster regeneration
+                        var map = LevelGenerator.Instance?.Map;
+                        if (map != null && map.MonsterShrine != null)
+                        {
+                            var shrineTrigger = map.MonsterShrine as MonsterShrineTrigger;
+                            if (shrineTrigger != null)
+                            {
+                                shrineTrigger.GenerateMementosForShrine(ignoreHasData: true, isReroll: true);
+                            }
+                        }
+                    });
+
+                    System.Threading.Thread.Sleep(500);
+
+                    // Return updated monster selection state
+                    return StateSerializer.GetMonsterSelectionStateJson();
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Log.LogError($"ExecuteMonsterSelectionChoice: Reroll failed - {ex.Message}");
+                    return JsonConfig.Error($"Monster reroll failed: {ex.Message}");
+                }
+            }
 
             // Calculate total count including random entry
             int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
@@ -1073,55 +1128,6 @@ namespace AethermancerHarness
             return GetMerchantMenu()?.IsOpen ?? false;
         }
 
-        public static string ExecuteMerchantInteract()
-        {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot shop during combat");
-
-            if (IsMerchantMenuOpen())
-                return StateSerializer.GetMerchantStateJson();
-
-            var map = LevelGenerator.Instance?.Map;
-            if (map == null)
-                return JsonConfig.Error("Map not loaded");
-
-            var merchantInteractable = map.MerchantInteractable;
-            if (merchantInteractable == null)
-                return JsonConfig.Error("No merchant on this map");
-
-            var merchant = merchantInteractable as MerchantInteractable;
-            if (merchant == null)
-                return JsonConfig.Error("Merchant is not a MerchantInteractable");
-
-            Plugin.Log.LogInfo("ExecuteMerchantInteract: Opening merchant shop");
-
-            var merchantPos = merchant.transform.position;
-            var playerMovement = PlayerMovementController.Instance;
-            if (playerMovement != null)
-            {
-                var targetPos = new UnityEngine.Vector3(merchantPos.x - 2f, merchantPos.y, merchantPos.z);
-                playerMovement.transform.position = targetPos;
-                Plugin.Log.LogInfo($"ExecuteMerchantInteract: Teleported player near merchant");
-            }
-
-            merchant.StartMerchantInteraction();
-
-            var startTime = DateTime.Now;
-            while (!IsMerchantMenuOpen() && !TimedOut(startTime, 3000))
-            {
-                System.Threading.Thread.Sleep(50);
-            }
-
-            if (!IsMerchantMenuOpen())
-            {
-                return JsonConfig.Error("Merchant menu failed to open");
-            }
-
-            System.Threading.Thread.Sleep(200);
-
-            return StateSerializer.GetMerchantStateJson();
-        }
-
         public static string ExecuteMerchantClose()
         {
             if (!IsMerchantMenuOpen())
@@ -1330,64 +1336,6 @@ namespace AethermancerHarness
         // =====================================================
         // AETHER SPRING INTERACTION
         // =====================================================
-
-        public static string ExecuteAetherSpringInteract()
-        {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot interact with aether spring during combat");
-
-            if (StateSerializer.IsInAetherSpringMenu())
-                return StateSerializer.GetAetherSpringStateJson();
-
-            var map = LevelGenerator.Instance?.Map;
-            if (map == null)
-                return JsonConfig.Error("Map not loaded");
-
-            // Find the single aether spring on this map
-            AetherSpringInteractable spring = null;
-            foreach (var s in map.AetherSpringInteractables)
-            {
-                var aetherSpring = s as AetherSpringInteractable;
-                if (aetherSpring != null && !aetherSpring.WasUsedUp)
-                {
-                    spring = aetherSpring;
-                    break;
-                }
-            }
-
-            if (spring == null)
-                return JsonConfig.Error("No available aether spring on this map");
-
-            Plugin.Log.LogInfo("ExecuteAetherSpringInteract: Starting interaction with aether spring");
-
-            Plugin.RunOnMainThreadAndWait(() =>
-            {
-                var springPos = spring.transform.position;
-                var playerMovement = PlayerMovementController.Instance;
-                if (playerMovement != null)
-                {
-                    var targetPos = new UnityEngine.Vector3(springPos.x - 2f, springPos.y, springPos.z);
-                    playerMovement.transform.position = targetPos;
-                    Plugin.Log.LogInfo($"ExecuteAetherSpringInteract: Teleported player near spring at ({targetPos.x:F1}, {targetPos.y:F1})");
-                }
-
-                spring.StartBaseInteraction();
-            });
-
-            var startTime = DateTime.Now;
-            while (!StateSerializer.IsInAetherSpringMenu() && !TimedOut(startTime, 3000))
-            {
-                System.Threading.Thread.Sleep(50);
-            }
-
-            if (!StateSerializer.IsInAetherSpringMenu())
-            {
-                return JsonConfig.Error("Aether spring menu failed to open");
-            }
-
-            System.Threading.Thread.Sleep(200);
-            return StateSerializer.GetAetherSpringStateJson();
-        }
 
         public static string ExecuteAetherSpringChoice(int choiceIndex)
         {
