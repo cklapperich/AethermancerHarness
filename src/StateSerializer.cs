@@ -710,7 +710,7 @@ namespace AethermancerHarness
                 ["pendingLevelUps"] = pendingLevelUps,
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
                 ["artifacts"] = BuildArtifactsArray(),
-                ["inventory"] = BuildInventoryObject(),
+                ["monsterSoulCount"] = InventoryManager.Instance?.MonsterSouls ?? 0,
                 ["party"] = BuildDetailedPartyArray()
             };
 
@@ -830,11 +830,6 @@ namespace AethermancerHarness
             for (int i = 0; i < cc.Enemies.Count; i++)
                 enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false));
 
-            var stateManager = CombatStateManager.Instance;
-            string combatResultStr = null;
-            if (stateManager?.State?.CurrentState?.ID == CombatStateManager.EState.CombatFinished)
-                combatResultStr = stateManager.WonEncounter ? CombatResult.Victory.ToJsonString() : CombatResult.Defeat.ToJsonString();
-
             var result = new JObject
             {
                 ["phase"] = GamePhase.Combat.ToJsonString(),
@@ -849,8 +844,7 @@ namespace AethermancerHarness
                 ["consumables"] = BuildConsumablesArray(),
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
                 ["artifacts"] = BuildArtifactsArray(),
-                ["inventory"] = BuildInventoryObject(),
-                ["combatResult"] = combatResultStr
+                ["monsterSoulCount"] = InventoryManager.Instance?.MonsterSouls ?? 0
             };
 
             return result.ToString(Newtonsoft.Json.Formatting.None);
@@ -862,18 +856,12 @@ namespace AethermancerHarness
             var current = cc.CurrentMonster;
             var currentIdx = current != null ? (current.BelongsToPlayer ? cc.PlayerMonsters.IndexOf(current) : -1) : -1;
 
-            var stateManager = CombatStateManager.Instance;
-            string combatResultStr = null;
-            if (stateManager?.State?.CurrentState?.ID == CombatStateManager.EState.CombatFinished)
-                combatResultStr = stateManager.WonEncounter ? CombatResult.Victory.ToJsonString() : CombatResult.Defeat.ToJsonString();
-
             var result = new JObject
             {
                 ["phase"] = GamePhase.Combat.ToJsonString(),
                 ["playerAether"] = BuildAetherObject(cc.PlayerAether?.Aether),
                 ["currentActorIndex"] = currentIdx,
-                ["readyForInput"] = ActionHandler.IsReadyForInput(),
-                ["combatResult"] = combatResultStr
+                ["readyForInput"] = ActionHandler.IsReadyForInput()
             };
 
             if (before != null && AetherChanged(before.EnemyAether, cc.EnemyAether?.Aether))
@@ -1166,7 +1154,7 @@ namespace AethermancerHarness
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
                 ["party"] = BuildDetailedPartyArray(),
                 ["artifacts"] = BuildArtifactsArray(),
-                ["inventory"] = BuildInventoryObject(),
+                ["monsterSoulCount"] = InventoryManager.Instance?.MonsterSouls ?? 0,
                 ["monsterGroups"] = BuildMonsterGroupsArray(),
                 ["interactables"] = BuildInteractablesArray()
             };
@@ -1452,34 +1440,5 @@ namespace AethermancerHarness
             return arr;
         }
 
-        private static JObject BuildInventoryObject()
-        {
-            var inventory = InventoryManager.Instance;
-
-            var artifacts = new JArray();
-            var consumables = inventory?.GetAllConsumables();
-            if (consumables != null)
-            {
-                for (int i = 0; i < consumables.Count; i++)
-                {
-                    var c = consumables[i];
-                    if (c.Charges <= 0) continue;
-
-                    artifacts.Add(new JObject
-                    {
-                        ["index"] = i,
-                        ["name"] = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
-                        ["currentCharges"] = c.Charges,
-                        ["maxCharges"] = c.GetMaxCharges()
-                    });
-                }
-            }
-
-            return new JObject
-            {
-                ["monsterSoulCount"] = inventory?.MonsterSouls ?? 0,
-                ["artifacts"] = artifacts
-            };
-        }
     }
 }
