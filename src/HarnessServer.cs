@@ -243,6 +243,14 @@ namespace AethermancerHarness
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
                         break;
 
+                    case "/debug/interactables":
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.DebugInteractables());
+                            responseBody = result;
+                        }
+                        break;
+
                     default:
                         responseBody = JsonConfig.Serialize(new
                         {
@@ -252,7 +260,8 @@ namespace AethermancerHarness
                                 "/health", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
                                 "/exploration/interact", "/exploration/loot-all", "/skill-select",
-                                "/npc/interact", "/choice", "/merchant/interact", "/aether-spring/interact"
+                                "/npc/interact", "/choice", "/merchant/interact", "/aether-spring/interact",
+                                "/debug/interactables"
                             }
                         });
                         statusCode = 404;

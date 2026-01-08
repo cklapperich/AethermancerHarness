@@ -1145,34 +1145,45 @@ namespace AethermancerHarness
         private static List<InteractableInfo> BuildInteractablesList()
         {
             var list = new List<InteractableInfo>();
-            var map = LevelGenerator.Instance?.Map;
-            if (map == null) return list;
 
-            foreach (var spring in map.AetherSpringInteractables)
+            // Find ALL DialogueInteractable objects (NPCs, events, collectables)
+            var allInteractables = UnityEngine.Object.FindObjectsByType<DialogueInteractable>(
+                UnityEngine.FindObjectsSortMode.None);
+
+            foreach (DialogueInteractable interactable in allInteractables)
             {
-                if (spring == null) continue;
-                var pos = spring.transform.position;
-                list.Add(new InteractableInfo
+                if (interactable == null) continue;
+
+                var pos = interactable.transform.position;
+                var gameObjectName = interactable.gameObject.name;
+
+                // Check if it's a collectable event or a regular NPC
+                InteractableType type;
+                if (gameObjectName.Contains("Collectable") || gameObjectName.Contains("SmallEvent"))
+                    type = InteractableType.Event;
+                else
+                    type = InteractableType.Npc;
+
+                var info = new InteractableInfo
                 {
-                    Type = InteractableType.AetherSpring,
+                    Type = type,
                     X = pos.x, Y = pos.y, Z = pos.z,
-                    Used = spring.WasUsedUp
-                });
+                    Used = interactable.WasUsedUp,
+                    Talked = interactable.WasUsedUp,
+                    Name = interactable.DialogueCharacter?.CharacterName ?? gameObjectName,
+                    HasEvent = interactable.DialogueCharacter?.EventOptions?.Count > 0
+                };
+
+                if (type == InteractableType.Event)
+                    info.Completed = interactable.WasUsedUp;
+
+                list.Add(info);
             }
 
-            foreach (var mg in map.MonsterGroupInteractables)
-            {
-                if (mg == null) continue;
-                var pos = mg.transform.position;
-                list.Add(new InteractableInfo
-                {
-                    Type = InteractableType.MonsterGroup,
-                    X = pos.x, Y = pos.y, Z = pos.z,
-                    Defeated = mg.WasUsedUp
-                });
-            }
-
-            foreach (var chest in map.ChestInteractables)
+            // Also find ChestInteractible objects
+            var allChests = UnityEngine.Object.FindObjectsByType<ChestInteractible>(
+                UnityEngine.FindObjectsSortMode.None);
+            foreach (var chest in allChests)
             {
                 if (chest == null) continue;
                 var pos = chest.transform.position;
@@ -1184,69 +1195,61 @@ namespace AethermancerHarness
                 });
             }
 
-            if (map.MerchantInteractable != null)
+            // Use map lists for types not directly accessible
+            var map = LevelGenerator.Instance?.Map;
+            if (map != null)
             {
-                var pos = map.MerchantInteractable.transform.position;
-                list.Add(new InteractableInfo
+                // AetherSprings from map
+                foreach (var spring in map.AetherSpringInteractables)
                 {
-                    Type = InteractableType.Merchant,
-                    X = pos.x, Y = pos.y, Z = pos.z
-                });
+                    if (spring == null) continue;
+                    var pos = spring.transform.position;
+                    list.Add(new InteractableInfo
+                    {
+                        Type = InteractableType.AetherSpring,
+                        X = pos.x, Y = pos.y, Z = pos.z,
+                        Used = spring.WasUsedUp
+                    });
+                }
+
+                // MonsterShrine from map
+                if (map.MonsterShrine != null)
+                {
+                    var pos = map.MonsterShrine.transform.position;
+                    list.Add(new InteractableInfo
+                    {
+                        Type = InteractableType.MonsterShrine,
+                        X = pos.x, Y = pos.y, Z = pos.z,
+                        Used = map.MonsterShrine.WasUsedUp
+                    });
+                }
+
+                // Merchant from map
+                if (map.MerchantInteractable != null)
+                {
+                    var pos = map.MerchantInteractable.transform.position;
+                    list.Add(new InteractableInfo
+                    {
+                        Type = InteractableType.Merchant,
+                        X = pos.x, Y = pos.y, Z = pos.z
+                    });
+                }
+
+                // SecretRooms from map
+                foreach (var secret in map.SecretRoomInteractables)
+                {
+                    if (secret == null) continue;
+                    var pos = secret.transform.position;
+                    list.Add(new InteractableInfo
+                    {
+                        Type = InteractableType.SecretRoom,
+                        X = pos.x, Y = pos.y, Z = pos.z,
+                        Found = secret.WasUsedUp
+                    });
+                }
             }
 
-            if (map.MonsterShrine != null)
-            {
-                var pos = map.MonsterShrine.transform.position;
-                list.Add(new InteractableInfo
-                {
-                    Type = InteractableType.MonsterShrine,
-                    X = pos.x, Y = pos.y, Z = pos.z,
-                    Used = map.MonsterShrine.WasUsedUp
-                });
-            }
-
-            int npcIndex = 0;
-            foreach (var interactable in map.DialogueInteractables)
-            {
-                if (interactable == null) continue;
-                var npc = interactable as DialogueInteractable;
-                if (npc == null) continue;
-                var pos = npc.transform.position;
-                list.Add(new InteractableInfo
-                {
-                    Type = InteractableType.Npc,
-                    Index = npcIndex++,
-                    Name = npc.DialogueCharacter?.CharacterName ?? "Unknown",
-                    X = pos.x, Y = pos.y, Z = pos.z,
-                    Talked = npc.WasUsedUp,
-                    HasEvent = npc.DialogueCharacter?.EventOptions?.Count > 0
-                });
-            }
-
-            foreach (var evt in map.SmallEventInteractables)
-            {
-                if (evt == null) continue;
-                var pos = evt.transform.position;
-                list.Add(new InteractableInfo
-                {
-                    Type = InteractableType.Event,
-                    X = pos.x, Y = pos.y, Z = pos.z,
-                    Completed = evt.WasUsedUp
-                });
-            }
-
-            foreach (var secret in map.SecretRoomInteractables)
-            {
-                if (secret == null) continue;
-                var pos = secret.transform.position;
-                list.Add(new InteractableInfo
-                {
-                    Type = InteractableType.SecretRoom,
-                    X = pos.x, Y = pos.y, Z = pos.z,
-                    Found = secret.WasUsedUp
-                });
-            }
-
+            // Find StartRun interactable in Pilgrim's Rest
             var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
             if (currentArea == EArea.PilgrimsRest)
             {
@@ -1259,6 +1262,39 @@ namespace AethermancerHarness
                         Type = InteractableType.StartRun,
                         X = pos.x, Y = pos.y, Z = pos.z
                     });
+                }
+            }
+
+            // Also find LootDroppers that might not be BaseInteractable
+            var propGen = LevelGenerator.Instance?.PropGenerator;
+            if (propGen != null)
+            {
+                var breakables = propGen.GeneratedBreakableObjects;
+                if (breakables != null)
+                {
+                    var seenPositions = new HashSet<string>();
+                    foreach (var item in list)
+                        seenPositions.Add($"{item.X:F0},{item.Y:F0}");
+
+                    foreach (var breakable in breakables)
+                    {
+                        if (breakable == null) continue;
+                        if (breakable.gameObject.name.Contains("LootDropper"))
+                        {
+                            var pos = breakable.transform.position;
+                            var posKey = $"{pos.x:F0},{pos.y:F0}";
+                            if (!seenPositions.Contains(posKey))
+                            {
+                                seenPositions.Add(posKey);
+                                list.Add(new InteractableInfo
+                                {
+                                    Type = InteractableType.LootDropper,
+                                    X = pos.x, Y = pos.y, Z = pos.z,
+                                    Used = breakable.WasUsedUp
+                                });
+                            }
+                        }
+                    }
                 }
             }
 

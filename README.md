@@ -2,6 +2,14 @@
 
 A BepInEx plugin that exposes an HTTP API for AI agent training in the Aethermancer game.
 
+## Important: API Conventions
+
+**All API responses use PascalCase field names** (e.g., `Phase`, `Round`, `Allies`, `MaxHp`).
+
+The only exception is `/health` which uses camelCase for legacy compatibility.
+
+**Empty POST bodies are supported** - endpoints like `/exploration/interact` don't require a request body.
+
 ## Status: Working
 
 **Implemented:**
@@ -68,14 +76,16 @@ The `/choice` endpoint handles all selection-based interactions. The endpoint au
 
 | Phase | Choice Types | Example |
 |-------|--------------|---------|
-| `DIALOGUE` | Dialogue options, artifact/equipment picks | `{"choiceIndex": 0}` |
-| `EQUIPMENT_SELECTION` | Assign to monster or scrap | `{"choiceIndex": 2}` for 3rd monster, last index for scrap |
-| `MERCHANT` | Buy item or leave shop | Item indices to buy, last index to leave |
-| `MONSTER_SELECTION` | Pick monster at shrine | `{"choiceIndex": 0}` |
-| `DIFFICULTY_SELECTION` | Select run difficulty | `{"choiceIndex": 1}` |
-| `AETHER_SPRING` | Select boon | `{"choiceIndex": 0}` for left, `1` for right |
+| `Dialogue` | Dialogue options, artifact/equipment picks | `{"choiceIndex": 0}` |
+| `EquipmentSelection` | Assign to monster or scrap | `{"choiceIndex": 2}` for 3rd monster, last index for scrap |
+| `Merchant` | Buy item or leave shop | Item indices to buy, last index to leave |
+| `MonsterSelection` | Pick monster at shrine | `{"choiceIndex": 0, "shift": "normal"}` |
+| `DifficultySelection` | Select run difficulty | `{"choiceIndex": 0}` for Normal |
+| `AetherSpring` | Select boon | `{"choiceIndex": 0}` for left, `1` for right |
 
-All phases return a `choices` array in their `/state` response. The last choice is often a special action (scrap, leave shop, etc.).
+All phases return a `Choices` array in their `/state` response. The last choice is often a special action (scrap, leave shop, etc.).
+
+**Important for Monster Selection:** Always parse the `Choices` array to find the monster by `Name`, don't assume indices are stable between sessions.
 
 ### Action Categories
 
@@ -97,13 +107,13 @@ All actions/skills include a `category` and `subTypes` array to help classify th
 **Example action:**
 ```json
 {
-  "index": 0,
-  "name": "Fireball",
-  "description": "Deal 50 Fire damage to an enemy.",
-  "cost": {"fire": 2},
-  "canUse": true,
-  "category": "attack",
-  "subTypes": ["damaging", "debuff"]
+  "Index": 0,
+  "Name": "Fireball",
+  "Description": "Deal 50 Fire damage to an enemy.",
+  "Cost": {"Fire": 2, "Water": 0, "Earth": 0, "Wind": 0, "Wild": 0},
+  "CanUse": true,
+  "Category": "Attack",
+  "SubTypes": ["Damaging", "Debuff"]
 }
 ```
 
@@ -112,10 +122,10 @@ All actions/skills include a `category` and `subTypes` array to help classify th
 **Get available monster groups** (from `/state` response in exploration):
 ```json
 {
-  "phase": "EXPLORATION",
-  "monsterGroups": [
-    {"index": 0, "x": 123.5, "y": 456.0, "z": 0, "defeated": false, "canVoidBlitz": true, "encounterType": "Normal", "monsterCount": 2},
-    {"index": 1, "x": 200.0, "y": 300.0, "z": 0, "defeated": false, "canVoidBlitz": true, "encounterType": "Champion", "monsterCount": 1}
+  "Phase": "Exploration",
+  "MonsterGroups": [
+    {"Index": 0, "X": 123.5, "Y": 456.0, "Z": 0, "Defeated": false, "CanVoidBlitz": true, "EncounterType": "Normal", "MonsterCount": 2},
+    {"Index": 1, "X": 200.0, "Y": 300.0, "Z": 0, "Defeated": false, "CanVoidBlitz": true, "EncounterType": "Champion", "MonsterCount": 1}
   ]
 }
 ```
@@ -146,10 +156,10 @@ curl -X POST http://localhost:8080/combat/start \
 **Get NPCs from `/state`** (in exploration phase):
 ```json
 {
-  "phase": "EXPLORATION",
-  "interactables": [
-    {"type": "NPC", "index": 0, "name": "Alioth", "x": 250.0, "y": 200.0, "z": 0, "talked": false, "hasEvent": true},
-    {"type": "NPC", "index": 1, "name": "Lily", "x": 300.0, "y": 150.0, "z": 0, "talked": true, "hasEvent": false}
+  "Phase": "Exploration",
+  "Interactables": [
+    {"Type": "Npc", "Index": 0, "Name": "Alioth", "X": 250.0, "Y": 200.0, "Z": 0, "Talked": false, "HasEvent": true},
+    {"Type": "Npc", "Index": 1, "Name": "Lily", "X": 300.0, "Y": 150.0, "Z": 0, "Talked": true, "HasEvent": false}
   ]
 }
 ```
@@ -164,69 +174,69 @@ curl -X POST http://localhost:8080/npc/interact \
 **Response with choices** (blocks until meaningful choice or dialogue ends):
 ```json
 {
-  "phase": "DIALOGUE",
-  "npc": "Alioth",
-  "dialogueText": "Which artifact interests you?",
-  "isChoiceEvent": true,
-  "choices": [
-    {"index": 0, "text": "Purging Harp", "type": "artifact"},
-    {"index": 1, "text": "Shielding Dust", "type": "artifact"}
+  "Phase": "Dialogue",
+  "Npc": "Alioth",
+  "DialogueText": "Which artifact interests you?",
+  "IsChoiceEvent": true,
+  "Choices": [
+    {"Index": 0, "Text": "Purging Harp", "Type": "Artifact"},
+    {"Index": 1, "Text": "Shielding Dust", "Type": "Artifact"}
   ],
-  "canGoBack": false
+  "CanGoBack": false
 }
 ```
 
 **Response with equipment choices** (e.g., Tiberion the Knight):
 ```json
 {
-  "phase": "DIALOGUE",
-  "npc": "Tiberion",
-  "dialogueText": "Choose your equipment:",
-  "isChoiceEvent": true,
-  "choices": [
+  "Phase": "Dialogue",
+  "Npc": "Tiberion",
+  "DialogueText": "Choose your equipment:",
+  "IsChoiceEvent": true,
+  "Choices": [
     {
-      "index": 0,
-      "text": "Iron Sword",
-      "type": "equipment",
-      "equipment": {
-        "name": "Iron Sword - Rare",
-        "equipmentType": "Weapon",
-        "rarity": "Rare",
-        "isAura": false,
-        "baseDescription": "Deal 10% more damage.",
-        "affixes": [
+      "Index": 0,
+      "Text": "Iron Sword",
+      "Type": "Equipment",
+      "Equipment": {
+        "Name": "Iron Sword - Rare",
+        "EquipmentType": "Weapon",
+        "Rarity": "Rare",
+        "IsAura": false,
+        "BaseDescription": "Deal 10% more damage.",
+        "Affixes": [
           {
-            "name": "Crit Chance",
-            "shortDescription": "Crit Chance +15%",
-            "description": "Increases critical hit chance by 15%.",
-            "isRare": false,
-            "perkType": "Common"
+            "Name": "Crit Chance",
+            "ShortDescription": "Crit Chance +15%",
+            "Description": "Increases critical hit chance by 15%.",
+            "IsRare": false,
+            "PerkType": "Common"
           },
           {
-            "name": "Life Steal",
-            "shortDescription": "Life Steal +8%",
-            "description": "Heal for 8% of damage dealt.",
-            "isRare": true,
-            "perkType": "Rare"
+            "Name": "Life Steal",
+            "ShortDescription": "Life Steal +8%",
+            "Description": "Heal for 8% of damage dealt.",
+            "IsRare": true,
+            "PerkType": "Rare"
           }
         ]
       }
     },
     {
-      "index": 1,
-      "text": "Steel Ring",
-      "type": "equipment",
-      "equipment": {
-        "name": "Steel Ring - Common",
-        "equipmentType": "Accessory",
-        "rarity": "Common",
-        "isAura": false,
-        "baseDescription": "Gain 5 shield at start of combat.",
-        "affixes": []
+      "Index": 1,
+      "Text": "Steel Ring",
+      "Type": "Equipment",
+      "Equipment": {
+        "Name": "Steel Ring - Common",
+        "EquipmentType": "Accessory",
+        "Rarity": "Common",
+        "IsAura": false,
+        "BaseDescription": "Gain 5 shield at start of combat.",
+        "Affixes": []
       }
     }
   ],
-  "canGoBack": false
+  "CanGoBack": false
 }
 ```
 
@@ -243,20 +253,20 @@ After selecting equipment from dialogue (e.g., Tiberion) or loot, the game enter
 
 ```json
 {
-  "phase": "EQUIPMENT_SELECTION",
-  "heldEquipment": {
-    "name": "Iron Sword - Rare",
-    "equipmentType": "Weapon",
-    "rarity": "Rare",
-    "baseDescription": "Deal 10% more damage.",
-    "affixes": [...]
+  "Phase": "EquipmentSelection",
+  "HeldEquipment": {
+    "Name": "Iron Sword - Rare",
+    "EquipmentType": "Weapon",
+    "Rarity": "Rare",
+    "BaseDescription": "Deal 10% more damage.",
+    "Affixes": [...]
   },
-  "scrapValue": 8,
-  "choices": [
-    {"index": 0, "type": "monster", "name": "Fenrir", "currentEquipment": null, "willTrade": false},
-    {"index": 1, "type": "monster", "name": "Drake", "currentEquipment": {"name": "Old Dagger", ...}, "willTrade": true},
-    {"index": 2, "type": "monster", "name": "Phoenix", "currentEquipment": null, "willTrade": false},
-    {"index": 3, "type": "scrap", "goldValue": 8}
+  "ScrapValue": 8,
+  "Choices": [
+    {"Index": 0, "Type": "Monster", "Name": "Fenrir", "CurrentEquipment": null, "WillTrade": false},
+    {"Index": 1, "Type": "Monster", "Name": "Drake", "CurrentEquipment": {"Name": "Old Dagger", ...}, "WillTrade": true},
+    {"Index": 2, "Type": "Monster", "Name": "Phoenix", "CurrentEquipment": null, "WillTrade": false},
+    {"Index": 3, "Type": "Scrap", "GoldValue": 8}
   ]
 }
 ```
@@ -269,7 +279,7 @@ curl -X POST http://localhost:8080/choice \
 ```
 
 **Trade equipment** (if monster already has equipment):
-When assigning to a monster that has equipment, the response shows `phase: EQUIPMENT_SELECTION` again with the traded equipment as `heldEquipment`.
+When assigning to a monster that has equipment, the response shows `Phase: EquipmentSelection` again with the traded equipment as `HeldEquipment`.
 
 **Scrap equipment for gold:**
 ```bash
@@ -285,16 +295,16 @@ curl -X POST http://localhost:8080/choice \
 curl -X POST http://localhost:8080/merchant/interact
 ```
 
-**Response** (phase: MERCHANT):
+**Response** (Phase: Merchant):
 ```json
 {
-  "phase": "MERCHANT",
-  "gold": 150,
-  "choices": [
-    {"index": 0, "name": "Iron Ring", "type": "equipment", "rarity": "Common", "price": 45, "isDiscounted": false, "canAfford": true},
-    {"index": 1, "name": "Monster Soul", "type": "monstersoul", "price": 20, "isDiscounted": true, "canAfford": true},
-    {"index": 2, "name": "Health Potion", "type": "consumable", "price": 15, "canAfford": true},
-    {"index": 3, "type": "close", "name": "Leave Shop"}
+  "Phase": "Merchant",
+  "Gold": 150,
+  "Choices": [
+    {"Index": 0, "Name": "Iron Ring", "Type": "Equipment", "Rarity": "Common", "Price": 45, "IsDiscounted": false, "CanAfford": true},
+    {"Index": 1, "Name": "Monster Soul", "Type": "MonsterSoul", "Price": 20, "IsDiscounted": true, "CanAfford": true},
+    {"Index": 2, "Name": "Health Potion", "Type": "Consumable", "Price": 15, "CanAfford": true},
+    {"Index": 3, "Type": "Close", "Name": "Leave Shop"}
   ]
 }
 ```
@@ -306,7 +316,7 @@ curl -X POST http://localhost:8080/choice \
   -d '{"choiceIndex": 1}'
 ```
 
-Note: When buying equipment, the game enters `EQUIPMENT_SELECTION` phase. Use `/choice` to assign to a monster or scrap.
+Note: When buying equipment, the game enters `EquipmentSelection` phase. Use `/choice` to assign to a monster or scrap.
 
 **Close shop** (use `/choice` with "Leave Shop" index):
 ```bash

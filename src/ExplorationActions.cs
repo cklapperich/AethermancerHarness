@@ -240,16 +240,31 @@ namespace AethermancerHarness
                     }
 
                     // Break all destructibles (boxes, plants, barrels)
+                    // Force break ALL breakables regardless of CanBeInteracted()
                     var breakables = propGen.GeneratedBreakableObjects;
+                    var playerMovement = PlayerMovementController.Instance;
+
                     if (breakables != null)
                     {
                         foreach (var breakable in breakables)
                         {
-                            if (breakable != null && breakable.CanBeInteracted())
+                            if (breakable == null || breakable.WasUsedUp) continue;
+
+                            try
                             {
+                                // Teleport player to breakable position
+                                if (playerMovement != null)
+                                {
+                                    var breakablePos = breakable.transform.position;
+                                    var targetPos = new UnityEngine.Vector3(breakablePos.x, breakablePos.y - 2f, breakablePos.z);
+                                    playerMovement.transform.position = targetPos;
+                                }
+
+                                // Force the interaction regardless of CanBeInteracted()
                                 breakable.StartBaseInteraction();
                                 brokenCount++;
                             }
+                            catch { /* Skip failures */ }
                         }
                     }
 
@@ -310,5 +325,6 @@ namespace AethermancerHarness
                 return JsonConfig.Error($"Exception during run start: {ex.Message}");
             }
         }
+
     }
 }

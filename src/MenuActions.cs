@@ -421,8 +421,8 @@ namespace AethermancerHarness
                 // Run UI operations on main thread
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Set the selection index
-                    selection.SetSelectedIndex(choiceIndex);
+                    // Set the selection index (use adjustedIndex to account for random option)
+                    selection.SetSelectedIndex(adjustedIndex);
 
                     // Set the shift (only applies to non-random monsters with shifted variants)
                     if (!isRandom && targetShift != selection.CurrentShift)
