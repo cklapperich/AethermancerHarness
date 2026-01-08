@@ -1167,13 +1167,20 @@ namespace AethermancerHarness
                 else
                     type = InteractableType.Npc;
 
+                // Determine name - check for care chest pattern first
+                string name;
+                if (gameObjectName.Contains("SmallEvent_NPC_Collectable"))
+                    name = "Care Chest";
+                else
+                    name = interactable.DialogueCharacter?.CharacterName ?? gameObjectName;
+
                 var info = new InteractableInfo
                 {
                     Type = type,
                     X = pos.x, Y = pos.y, Z = pos.z,
                     Used = interactable.WasUsedUp,
                     Talked = interactable.WasUsedUp,
-                    Name = interactable.DialogueCharacter?.CharacterName ?? gameObjectName,
+                    Name = name,
                     HasEvent = interactable.DialogueCharacter?.EventOptions?.Count > 0
                 };
 
