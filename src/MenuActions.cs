@@ -15,23 +15,44 @@ namespace AethermancerHarness
 
         public static string WaitForPostCombatComplete(int timeoutMs = 60000)
         {
+            // This method can be called from HTTP thread - it handles its own threading
             var startTime = DateTime.Now;
             Plugin.Log.LogInfo("WaitForPostCombatComplete: Starting post-combat auto-advance");
 
-            while (!IsPostCombatMenuOpen())
+            while (true)
             {
+                // Check states on main thread
+                bool postCombatOpen = false;
+                bool inExploration = false;
+                string explorationResult = null;
+
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    postCombatOpen = IsPostCombatMenuOpen();
+                    if (!postCombatOpen)
+                    {
+                        inExploration = IsInExploration();
+                        if (inExploration)
+                            explorationResult = CreateExplorationResult(CombatResult.Victory);
+                    }
+                });
+
+                if (postCombatOpen)
+                    break;
+
+                if (inExploration)
+                {
+                    Plugin.Log.LogInfo("WaitForPostCombatComplete: Back in exploration (no post-combat screens)");
+                    return explorationResult;
+                }
+
                 if (TimedOut(startTime, timeoutMs))
                 {
                     Plugin.Log.LogWarning("WaitForPostCombatComplete: Timeout waiting for PostCombatMenu");
                     return JsonConfig.Error("Timeout waiting for PostCombatMenu to open", new { phase = GamePhase.Timeout });
                 }
 
-                if (IsInExploration())
-                {
-                    Plugin.Log.LogInfo("WaitForPostCombatComplete: Back in exploration (no post-combat screens)");
-                    return CreateExplorationResult(CombatResult.Victory);
-                }
-
+                // Sleep on HTTP thread - doesn't block Unity
                 System.Threading.Thread.Sleep(100);
             }
 
@@ -41,65 +62,132 @@ namespace AethermancerHarness
 
         private static string ProcessPostCombatStates(DateTime startTime, int timeoutMs)
         {
-            var postCombatMenu = UIController.Instance.PostCombatMenu;
+            // This method can be called from HTTP thread - it handles its own threading
 
             while (true)
             {
                 if (TimedOut(startTime, timeoutMs))
                     return JsonConfig.Error("Timeout waiting for post-combat processing", new { phase = GamePhase.Timeout });
 
-                if (StateSerializer.IsInSkillSelection())
+                // Check all state conditions on main thread
+                bool inSkillSelection = false;
+                bool inEndOfRun = false;
+                bool inExploration = false;
+                string skillSelectionResult = null;
+                string explorationResult = null;
+                PostCombatMenu.EPostCombatMenuState currentState = default;
+                bool worthinessCanContinue = false;
+                bool levelUpCanContinue = false;
+                bool hasPendingLevelUp = false;
+
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    inSkillSelection = StateSerializer.IsInSkillSelection();
+                    if (inSkillSelection)
+                    {
+                        skillSelectionResult = StateSerializer.GetSkillSelectionStateJson();
+                        return;
+                    }
+
+                    inEndOfRun = StateSerializer.IsInEndOfRunMenu();
+                    if (inEndOfRun)
+                        return;
+
+                    inExploration = IsInExploration();
+                    if (inExploration)
+                    {
+                        explorationResult = CreateExplorationResult(CombatResult.Victory);
+                        return;
+                    }
+
+                    var postCombatMenu = UIController.Instance?.PostCombatMenu;
+                    if (postCombatMenu == null)
+                        return;
+
+                    currentState = postCombatMenu.CurrentState;
+
+                    switch (currentState)
+                    {
+                        case PostCombatMenu.EPostCombatMenuState.WorthinessUI:
+                        case PostCombatMenu.EPostCombatMenuState.WorthinessUIDetailed:
+                            worthinessCanContinue = CheckWorthinessCanContinue(postCombatMenu);
+                            break;
+
+                        case PostCombatMenu.EPostCombatMenuState.LevelUpUI:
+                            levelUpCanContinue = CheckLevelUpCanContinue(postCombatMenu);
+                            hasPendingLevelUp = levelUpCanContinue && FindFirstPendingLevelUp(postCombatMenu) != null;
+                            break;
+                    }
+                });
+
+                // Handle results outside main thread dispatch
+                if (inSkillSelection)
                 {
                     Plugin.Log.LogInfo("ProcessPostCombatStates: Skill selection menu is open");
-                    return StateSerializer.GetSkillSelectionStateJson();
+                    return skillSelectionResult;
                 }
 
-                // Check for end of run screen and auto-continue
-                if (StateSerializer.IsInEndOfRunMenu())
+                if (inEndOfRun)
                 {
                     Plugin.Log.LogInfo("ProcessPostCombatStates: End of run screen detected, auto-continuing");
-                    AutoContinueFromEndOfRun();
+                    Plugin.RunOnMainThreadAndWait(() => AutoContinueFromEndOfRun());
                     System.Threading.Thread.Sleep(500);
                     continue;
                 }
 
-                if (IsInExploration())
+                if (inExploration)
                 {
                     Plugin.Log.LogInfo("ProcessPostCombatStates: Back in exploration");
-                    return CreateExplorationResult(CombatResult.Victory);
+                    return explorationResult;
                 }
 
-                var currentState = postCombatMenu.CurrentState;
                 Plugin.Log.LogInfo($"ProcessPostCombatStates: Current state = {currentState}");
 
                 switch (currentState)
                 {
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUI:
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUIDetailed:
-                        if (WaitForWorthinessCanContinue(postCombatMenu, startTime, timeoutMs))
+                        if (worthinessCanContinue)
                         {
                             Plugin.Log.LogInfo("ProcessPostCombatStates: Worthiness CanContinue, triggering Continue");
-                            TriggerContinue(postCombatMenu);
+                            Plugin.RunOnMainThreadAndWait(() =>
+                            {
+                                var menu = UIController.Instance?.PostCombatMenu;
+                                if (menu != null) TriggerContinue(menu);
+                            });
                             System.Threading.Thread.Sleep(200);
                         }
                         break;
 
                     case PostCombatMenu.EPostCombatMenuState.LevelUpUI:
-                        if (WaitForLevelUpCanContinue(postCombatMenu, startTime, timeoutMs))
+                        if (levelUpCanContinue)
                         {
-                            var pendingLevelUp = FindFirstPendingLevelUp(postCombatMenu);
-                            if (pendingLevelUp != null)
+                            if (hasPendingLevelUp)
                             {
                                 Plugin.Log.LogInfo("ProcessPostCombatStates: Found pending level up, opening skill selection");
-                                OpenSkillSelectionForMonster(pendingLevelUp);
+                                Plugin.RunOnMainThreadAndWait(() =>
+                                {
+                                    var menu = UIController.Instance?.PostCombatMenu;
+                                    var pendingLevelUp = menu != null ? FindFirstPendingLevelUp(menu) : null;
+                                    if (pendingLevelUp != null)
+                                        OpenSkillSelectionForMonster(pendingLevelUp);
+                                });
 
                                 if (WaitForSkillSelectionOpen(startTime, timeoutMs))
-                                    return StateSerializer.GetSkillSelectionStateJson();
+                                {
+                                    string result = null;
+                                    Plugin.RunOnMainThreadAndWait(() => result = StateSerializer.GetSkillSelectionStateJson());
+                                    return result;
+                                }
                             }
                             else
                             {
                                 Plugin.Log.LogInfo("ProcessPostCombatStates: No pending level ups, continuing");
-                                TriggerContinue(postCombatMenu);
+                                Plugin.RunOnMainThreadAndWait(() =>
+                                {
+                                    var menu = UIController.Instance?.PostCombatMenu;
+                                    if (menu != null) TriggerContinue(menu);
+                                });
                                 System.Threading.Thread.Sleep(200);
                             }
                         }
@@ -107,12 +195,38 @@ namespace AethermancerHarness
 
                     case PostCombatMenu.EPostCombatMenuState.SkillSelectionUI:
                         Plugin.Log.LogInfo("ProcessPostCombatStates: In SkillSelectionUI state");
-                        System.Threading.Thread.Sleep(100);
                         break;
                 }
 
+                // Sleep on HTTP thread - doesn't block Unity
                 System.Threading.Thread.Sleep(100);
             }
+        }
+
+        /// <summary>
+        /// Quick check if all worthiness UIs can continue. MUST be called on main thread.
+        /// </summary>
+        private static bool CheckWorthinessCanContinue(PostCombatMenu postCombatMenu)
+        {
+            foreach (var info in postCombatMenu.PostCombatMonsterInfos)
+            {
+                if (info.monster != null && info.gameObject.activeSelf && !info.WorthinessUI.CanContinue)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Quick check if all level up UIs can continue. MUST be called on main thread.
+        /// </summary>
+        private static bool CheckLevelUpCanContinue(PostCombatMenu postCombatMenu)
+        {
+            foreach (var info in postCombatMenu.PostCombatMonsterInfos)
+            {
+                if (info.monster != null && info.gameObject.activeSelf && !info.LevelUpUI.CanContinue)
+                    return false;
+            }
+            return true;
         }
 
         private static bool IsPostCombatMenuOpen()
@@ -128,6 +242,9 @@ namespace AethermancerHarness
             return notInCombat && notInPostCombat && notInEndOfRun;
         }
 
+        /// <summary>
+        /// Auto-continue from end of run screen. MUST be called on main thread.
+        /// </summary>
         private static void AutoContinueFromEndOfRun()
         {
             var menu = GetEndOfRunMenu();
@@ -139,53 +256,7 @@ namespace AethermancerHarness
 
             bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
             Plugin.Log.LogInfo($"AutoContinueFromEndOfRun: Closing end-of-run screen ({(isVictory ? "VICTORY" : "DEFEAT")})");
-
-            Plugin.RunOnMainThreadAndWait(() =>
-            {
-                menu.Close();
-            });
-        }
-
-        private static bool WaitForWorthinessCanContinue(PostCombatMenu postCombatMenu, DateTime startTime, int timeoutMs)
-        {
-            while (true)
-            {
-                if (TimedOut(startTime, timeoutMs)) return false;
-
-                bool allCanContinue = true;
-                foreach (var info in postCombatMenu.PostCombatMonsterInfos)
-                {
-                    if (info.monster != null && info.gameObject.activeSelf && !info.WorthinessUI.CanContinue)
-                    {
-                        allCanContinue = false;
-                        break;
-                    }
-                }
-
-                if (allCanContinue) return true;
-                System.Threading.Thread.Sleep(100);
-            }
-        }
-
-        private static bool WaitForLevelUpCanContinue(PostCombatMenu postCombatMenu, DateTime startTime, int timeoutMs)
-        {
-            while (true)
-            {
-                if (TimedOut(startTime, timeoutMs)) return false;
-
-                bool allCanContinue = true;
-                foreach (var info in postCombatMenu.PostCombatMonsterInfos)
-                {
-                    if (info.monster != null && info.gameObject.activeSelf && !info.LevelUpUI.CanContinue)
-                    {
-                        allCanContinue = false;
-                        break;
-                    }
-                }
-
-                if (allCanContinue) return true;
-                System.Threading.Thread.Sleep(100);
-            }
+            menu.Close();
         }
 
         private static PostCombatMonsterInfo FindFirstPendingLevelUp(PostCombatMenu postCombatMenu)
@@ -212,10 +283,14 @@ namespace AethermancerHarness
 
         private static bool WaitForSkillSelectionOpen(DateTime startTime, int timeoutMs)
         {
+            // This method can be called from HTTP thread - it handles its own threading
             while (!TimedOut(startTime, timeoutMs))
             {
-                if (StateSerializer.IsInSkillSelection())
+                bool isOpen = false;
+                Plugin.RunOnMainThreadAndWait(() => isOpen = StateSerializer.IsInSkillSelection());
+                if (isOpen)
                     return true;
+                // Sleep on HTTP thread - doesn't block Unity
                 System.Threading.Thread.Sleep(100);
             }
             return false;

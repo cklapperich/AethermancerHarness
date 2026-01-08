@@ -68,8 +68,21 @@ namespace AethermancerHarness
             var startTime = DateTime.Now;
             while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
             {
-                if (IsReadyForInput())
+                // Check readiness on main thread, but sleep on calling thread
+                bool ready = false;
+                if (Plugin.IsMainThread)
+                {
+                    ready = IsReadyForInput();
+                }
+                else
+                {
+                    Plugin.RunOnMainThreadAndWait(() => ready = IsReadyForInput());
+                }
+
+                if (ready)
                     return true;
+
+                // Sleep on calling thread (HTTP thread) - this doesn't block Unity
                 System.Threading.Thread.Sleep(50);
             }
             return false;
@@ -142,116 +155,243 @@ namespace AethermancerHarness
 
         public static string ExecuteCombatAction(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
         {
-            if (!IsReadyForInput())
-                return JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+            // This method can be called from HTTP thread - it handles its own threading
 
-            var cc = CombatController.Instance;
+            string error = null;
+            string actionName = null;
+            string resolvedActorName = null;
+            string targetName = null;
+            CombatStateSnapshot snapshot = null;
 
-            // Resolve actor: name takes precedence if index is -1
-            int resolvedActorIndex = actorIndex;
-            if (!string.IsNullOrEmpty(actorName))
+            // Phase 1: Validate and start action (main thread)
+            Plugin.RunOnMainThreadAndWait(() =>
             {
-                if (actorIndex >= 0)
-                    return JsonConfig.Error("Cannot specify both actorIndex and actorName");
-                var (idx, err) = ResolveActorByName(actorName, cc);
-                if (err != null)
-                    return JsonConfig.Error(err);
-                resolvedActorIndex = idx;
-            }
+                if (!IsReadyForInput())
+                {
+                    error = JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                    return;
+                }
 
-            if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
-                return JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
+                var cc = CombatController.Instance;
 
-            var actor = cc.PlayerMonsters[resolvedActorIndex];
+                // Resolve actor: name takes precedence if index is -1
+                int resolvedActorIndex = actorIndex;
+                if (!string.IsNullOrEmpty(actorName))
+                {
+                    if (actorIndex >= 0)
+                    {
+                        error = JsonConfig.Error("Cannot specify both actorIndex and actorName");
+                        return;
+                    }
+                    var (idx, err) = ResolveActorByName(actorName, cc);
+                    if (err != null)
+                    {
+                        error = JsonConfig.Error(err);
+                        return;
+                    }
+                    resolvedActorIndex = idx;
+                }
 
-            // Resolve skill: name takes precedence if index is -1
-            int resolvedSkillIndex = skillIndex;
-            if (!string.IsNullOrEmpty(skillName))
+                if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
+                {
+                    error = JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
+                    return;
+                }
+
+                var actor = cc.PlayerMonsters[resolvedActorIndex];
+
+                // Resolve skill: name takes precedence if index is -1
+                int resolvedSkillIndex = skillIndex;
+                if (!string.IsNullOrEmpty(skillName))
+                {
+                    if (skillIndex >= 0)
+                    {
+                        error = JsonConfig.Error("Cannot specify both skillIndex and skillName");
+                        return;
+                    }
+                    var (idx, err) = ResolveSkillByName(skillName, actor);
+                    if (err != null)
+                    {
+                        error = JsonConfig.Error(err);
+                        return;
+                    }
+                    resolvedSkillIndex = idx;
+                }
+
+                if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
+                {
+                    error = JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
+                    return;
+                }
+
+                var skill = actor.SkillManager.Actions[resolvedSkillIndex];
+
+                if (!skill.Action.CanUseAction(skill))
+                {
+                    error = JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
+                    return;
+                }
+
+                var (target, targetError) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
+                if (target == null)
+                {
+                    error = JsonConfig.Error(targetError);
+                    return;
+                }
+
+                // Capture info needed for later phases
+                actionName = skill.Action.Name;
+                resolvedActorName = actor.Name;
+                targetName = GetTargetName(target);
+                snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
+
+                Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {targetName}");
+                actor.State.StartAction(skill, target, target);
+            });
+
+            if (error != null)
+                return error;
+
+            // Phase 2: Wait for ready (HTTP thread with main thread checks)
+            bool ready = WaitForReady(30000);
+
+            // Phase 3: Check combat result and capture state (main thread)
+            string result = null;
+            bool combatWon = false;
+            Plugin.RunOnMainThreadAndWait(() =>
             {
-                if (skillIndex >= 0)
-                    return JsonConfig.Error("Cannot specify both skillIndex and skillName");
-                var (idx, err) = ResolveSkillByName(skillName, actor);
-                if (err != null)
-                    return JsonConfig.Error(err);
-                resolvedSkillIndex = idx;
-            }
+                var stateManager = CombatStateManager.Instance;
+                bool combatEnded = stateManager?.State?.CurrentState?.ID >= CombatStateManager.EState.EndCombatTriggers;
+                combatWon = combatEnded && stateManager.WonEncounter;
 
-            if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
-                return JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
+                if (!combatWon)
+                {
+                    // Combat not won - build response immediately
+                    result = BuildCombatActionResponse(actionName, resolvedActorName, targetName, ready, false, snapshot);
+                }
+            });
 
-            var skill = actor.SkillManager.Actions[resolvedSkillIndex];
+            if (result != null)
+                return result;
 
-            if (!skill.Action.CanUseAction(skill))
-                return JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
-
-            var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
-            if (target == null)
-                return JsonConfig.Error(error);
-
-            Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
-            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
-            actor.State.StartAction(skill, target, target);
-
-            return FinishCombatAction(skill.Action.Name, actor.Name, target, snapshot: snapshot);
+            // Phase 4: Combat was won - handle post-combat on HTTP thread
+            Plugin.Log.LogInfo("Combat won, starting post-combat auto-advance");
+            return WaitForPostCombatComplete();
         }
 
         public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
         {
-            if (!IsReadyForInput())
-                return JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+            // This method can be called from HTTP thread - it handles its own threading
 
-            var cc = CombatController.Instance;
-            var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
+            string error = null;
+            string actionName = null;
+            string actorName = null;
+            string targetName = null;
+            CombatStateSnapshot snapshot = null;
 
-            if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
+            // Phase 1: Validate and start action (main thread)
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                if (!IsReadyForInput())
+                {
+                    error = JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                    return;
+                }
 
-            var consumable = consumables[consumableIndex];
-            var currentMonster = cc.CurrentMonster;
+                var cc = CombatController.Instance;
+                var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
-            if (currentMonster == null)
-                return JsonConfig.Error("No current monster to use consumable");
+                if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
+                {
+                    error = JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
+                    return;
+                }
 
-            consumable.Owner = currentMonster;
+                var consumable = consumables[consumableIndex];
+                var currentMonster = cc.CurrentMonster;
 
-            if (!consumable.Action.CanUseAction(consumable))
-                return JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
+                if (currentMonster == null)
+                {
+                    error = JsonConfig.Error("No current monster to use consumable");
+                    return;
+                }
 
-            var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
-            if (target == null)
-                return JsonConfig.Error(error);
+                consumable.Owner = currentMonster;
 
-            Plugin.Log.LogInfo($"Using consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
-            var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
-            currentMonster.State.StartAction(consumable, target, target);
+                if (!consumable.Action.CanUseAction(consumable))
+                {
+                    error = JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
+                    return;
+                }
 
-            return FinishCombatAction(consumable.Consumable?.Name ?? "", currentMonster.Name, target, isConsumable: true, snapshot: snapshot);
-        }
+                var (target, targetError) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
+                if (target == null)
+                {
+                    error = JsonConfig.Error(targetError);
+                    return;
+                }
 
-        private static string FinishCombatAction(string actionName, string actorName, ITargetable target, bool isConsumable = false, CombatStateSnapshot snapshot = null)
-        {
+                // Capture info needed for later phases
+                actionName = consumable.Consumable?.Name ?? "";
+                actorName = currentMonster.Name;
+                targetName = GetTargetName(target);
+                snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
+
+                Plugin.Log.LogInfo($"Using consumable: {actionName} on {targetName}");
+                currentMonster.State.StartAction(consumable, target, target);
+            });
+
+            if (error != null)
+                return error;
+
+            // Phase 2: Wait for ready (HTTP thread with main thread checks)
             bool ready = WaitForReady(30000);
 
+            // Phase 3: Check combat result and capture state (main thread)
+            string result = null;
+            bool combatWon = false;
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                var stateManager = CombatStateManager.Instance;
+                bool combatEnded = stateManager?.State?.CurrentState?.ID >= CombatStateManager.EState.EndCombatTriggers;
+                combatWon = combatEnded && stateManager.WonEncounter;
+
+                if (!combatWon)
+                {
+                    // Combat not won - build response immediately
+                    result = BuildCombatActionResponse(actionName, actorName, targetName, ready, true, snapshot);
+                }
+            });
+
+            if (result != null)
+                return result;
+
+            // Phase 4: Combat was won - handle post-combat on HTTP thread
+            Plugin.Log.LogInfo("Combat won, starting post-combat auto-advance");
+            return WaitForPostCombatComplete();
+        }
+
+        /// <summary>
+        /// Build the response JSON after a combat action completes.
+        /// MUST be called on main thread. Does NOT handle combat won case.
+        /// </summary>
+        private static string BuildCombatActionResponse(string actionName, string actorName, string targetName, bool ready, bool isConsumable, CombatStateSnapshot snapshot)
+        {
             var stateManager = CombatStateManager.Instance;
             bool combatEnded = stateManager?.State?.CurrentState?.ID >= CombatStateManager.EState.EndCombatTriggers;
 
-            if (combatEnded && stateManager.WonEncounter)
-            {
-                Plugin.Log.LogInfo("Combat won, starting post-combat auto-advance");
-                return WaitForPostCombatComplete();
-            }
-
+            // Combat won case is handled by caller on HTTP thread
             if (combatEnded && !stateManager.WonEncounter)
             {
                 Plugin.Log.LogInfo("Combat lost");
-                var result = new JObject
+                var defeatResult = new JObject
                 {
                     ["success"] = true,
                     ["action"] = actionName,
                     ["combatResult"] = CombatResult.Defeat.ToString(),
                     ["state"] = JObject.Parse(StateSerializer.ToJson())
                 };
-                return result.ToString(Newtonsoft.Json.Formatting.None);
+                return defeatResult.ToString(Newtonsoft.Json.Formatting.None);
             }
 
             // Check if round changed - if so, use full state (condensed would include enemy action effects)
@@ -264,7 +404,7 @@ namespace AethermancerHarness
                 ["success"] = true,
                 ["action"] = actionName,
                 ["actor"] = actorName,
-                ["target"] = GetTargetName(target),
+                ["target"] = targetName,
                 ["waitedForReady"] = ready,
                 ["state"] = useCondensed
                     ? JObject.Parse(StateSerializer.BuildCondensedCombatStateJson(snapshot))

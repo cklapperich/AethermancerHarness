@@ -110,9 +110,8 @@ namespace AethermancerHarness
                         if (method == "POST")
                         {
                             var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleCombatAction(body));
-                            responseBody = result;
+                            // HandleCombatAction handles its own threading internally
+                            responseBody = HandleCombatAction(body);
                         }
                         else
                             (responseBody, statusCode) = (JsonConfig.Error("Method not allowed"), 405);
