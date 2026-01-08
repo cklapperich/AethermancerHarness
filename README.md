@@ -41,7 +41,7 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Check if game is ready |
-| GET | `/state` | Get current game state (exploration, combat, dialogue, or skill selection) |
+| GET | `/state` | Get current game state (exploration, combat, dialogue, merchant, or skill selection) |
 | GET | `/actions` | Get valid combat actions |
 | POST | `/combat/action` | Execute combat action (skill or consumable) |
 | POST | `/combat/preview` | Preview action effects without executing |
@@ -51,12 +51,24 @@ Or launch Aethermancer through Steam normally. Server runs on `http://localhost:
 | POST | `/exploration/interact` | Trigger interaction with nearby object |
 | POST | `/skill-select` | Select skill during level-up |
 | POST | `/npc/interact` | Start dialogue with NPC (auto-progresses to choices) |
-| POST | `/choice` | Universal choice handler (dialogue, equipment selection) |
+| POST | `/choice` | Universal choice handler (dialogue, equipment, merchant) |
 | POST | `/merchant/interact` | Open merchant shop (auto-teleports) |
-| POST | `/merchant/buy` | Buy item by index |
-| POST | `/merchant/close` | Close merchant menu |
 
 See [CLAUDE_GUIDE.md](CLAUDE_GUIDE.md) for detailed API documentation.
+
+### Unified Choice Pattern
+
+The `/choice` endpoint handles all selection-based interactions. The endpoint auto-detects the current game phase and routes accordingly:
+
+| Phase | Choice Types | Example |
+|-------|--------------|---------|
+| `DIALOGUE` | Dialogue options, artifact/equipment picks | `{"choiceIndex": 0}` |
+| `EQUIPMENT_SELECTION` | Assign to monster or scrap | `{"choiceIndex": 2}` for 3rd monster, last index for scrap |
+| `MERCHANT` | Buy item or leave shop | Item indices to buy, last index to leave |
+| `MONSTER_SELECTION` | Pick monster at shrine | `{"choiceIndex": 0}` |
+| `DIFFICULTY_SELECTION` | Select run difficulty | `{"choiceIndex": 1}` |
+
+All phases return a `choices` array in their `/state` response. The last choice is often a special action (scrap, leave shop, etc.).
 
 ### Action Categories
 
@@ -271,26 +283,29 @@ curl -X POST http://localhost:8080/merchant/interact
 {
   "phase": "MERCHANT",
   "gold": 150,
-  "items": [
+  "choices": [
     {"index": 0, "name": "Iron Ring", "type": "equipment", "rarity": "Common", "price": 45, "isDiscounted": false, "canAfford": true},
     {"index": 1, "name": "Monster Soul", "type": "monstersoul", "price": 20, "isDiscounted": true, "canAfford": true},
-    {"index": 2, "name": "Health Potion", "type": "consumable", "price": 15, "canAfford": true}
+    {"index": 2, "name": "Health Potion", "type": "consumable", "price": 15, "canAfford": true},
+    {"index": 3, "type": "close", "name": "Leave Shop"}
   ]
 }
 ```
 
-**Buy an item:**
+**Buy an item** (use `/choice` with item index):
 ```bash
-curl -X POST http://localhost:8080/merchant/buy \
+curl -X POST http://localhost:8080/choice \
   -H "Content-Type: application/json" \
-  -d '{"itemIndex": 1}'
+  -d '{"choiceIndex": 1}'
 ```
 
 Note: When buying equipment, the game enters `EQUIPMENT_SELECTION` phase. Use `/choice` to assign to a monster or scrap.
 
-**Close shop:**
+**Close shop** (use `/choice` with "Leave Shop" index):
 ```bash
-curl -X POST http://localhost:8080/merchant/close
+curl -X POST http://localhost:8080/choice \
+  -H "Content-Type: application/json" \
+  -d '{"choiceIndex": 3}'
 ```
 
 ## Project Structure

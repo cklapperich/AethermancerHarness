@@ -151,25 +151,9 @@ namespace AethermancerHarness
             return UIController.Instance?.DifficultySelectMenu?.IsOpen ?? false;
         }
 
-        // Cached reflection for EndOfRunMenu access
-        private static System.Reflection.FieldInfo _endOfRunMenuField;
-
-        private static EndOfRunMenu GetEndOfRunMenu()
-        {
-            var ui = UIController.Instance;
-            if (ui == null) return null;
-
-            if (_endOfRunMenuField == null)
-            {
-                _endOfRunMenuField = typeof(UIController).GetField("EndOfRunMenu",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-            }
-            return _endOfRunMenuField?.GetValue(ui) as EndOfRunMenu;
-        }
-
         public static bool IsInEndOfRunMenu()
         {
-            return GetEndOfRunMenu()?.IsOpen ?? false;
+            return ActionHandler.GetEndOfRunMenu()?.IsOpen ?? false;
         }
 
         public static string GetDifficultySelectionStateJson()
@@ -179,7 +163,7 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "DIFFICULTY_SELECTION",
+                    ["phase"] = GamePhase.DifficultySelection.ToJsonString(),
                     ["error"] = "Difficulty selection menu not available"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -216,7 +200,7 @@ namespace AethermancerHarness
 
             var result = new JObject
             {
-                ["phase"] = "DIFFICULTY_SELECTION",
+                ["phase"] = GamePhase.DifficultySelection.ToJsonString(),
                 ["currentDifficulty"] = currentDifficulty.ToString(),
                 ["maxUnlockedDifficulty"] = maxUnlocked,
                 ["choices"] = choices,
@@ -229,12 +213,12 @@ namespace AethermancerHarness
 
         public static string GetEndOfRunStateJson()
         {
-            var menu = GetEndOfRunMenu();
+            var menu = ActionHandler.GetEndOfRunMenu();
             if (menu == null || !menu.IsOpen)
             {
                 return new JObject
                 {
-                    ["phase"] = "END_OF_RUN",
+                    ["phase"] = GamePhase.EndOfRun.ToJsonString(),
                     ["error"] = "End of run menu not available"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -243,14 +227,14 @@ namespace AethermancerHarness
             bool isVictory = menu.VictoryBanner?.activeSelf ?? false;
             bool isDefeat = menu.DefeatBanner?.activeSelf ?? false;
 
-            string resultText = "UNKNOWN";
-            if (isVictory) resultText = "VICTORY";
-            else if (isDefeat) resultText = "DEFEAT";
+            CombatResult combatResult = CombatResult.Unknown;
+            if (isVictory) combatResult = CombatResult.Victory;
+            else if (isDefeat) combatResult = CombatResult.Defeat;
 
             var result = new JObject
             {
-                ["phase"] = "END_OF_RUN",
-                ["result"] = resultText,
+                ["phase"] = GamePhase.EndOfRun.ToJsonString(),
+                ["result"] = combatResult.ToJsonString(),
                 ["canContinue"] = true,
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0
             };
@@ -265,7 +249,7 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "MONSTER_SELECTION",
+                    ["phase"] = GamePhase.MonsterSelection.ToJsonString(),
                     ["error"] = "Monster selection menu not available"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -277,26 +261,13 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "MONSTER_SELECTION",
+                    ["phase"] = GamePhase.MonsterSelection.ToJsonString(),
                     ["error"] = "No monsters available for selection"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
 
-            // Map shrine state to string
-            string shrineType;
-            switch (menu.ShrineSelectionState)
-            {
-                case EShrineState.StarterSelection:
-                    shrineType = "starter";
-                    break;
-                case EShrineState.RunStartSelection:
-                    shrineType = "runStart";
-                    break;
-                case EShrineState.NormalShrineSelection:
-                default:
-                    shrineType = "normal";
-                    break;
-            }
+            // Map shrine state to enum
+            var shrineType = menu.ShrineSelectionState.ToShrineType();
 
             // Build choices array - manually insert random entry at correct position
             // The game's internal list has random inserted, but menu.DisplayedMonsters doesn't
@@ -313,7 +284,7 @@ namespace AethermancerHarness
                     choices.Add(new JObject
                     {
                         ["index"] = outputIndex,
-                        ["type"] = "random",
+                        ["type"] = ChoiceType.Random.ToJsonString(),
                         ["name"] = "Random Monster"
                     });
                     outputIndex++;
@@ -324,9 +295,8 @@ namespace AethermancerHarness
                     var choiceObj = new JObject
                     {
                         ["index"] = outputIndex,
-                        ["type"] = "monster",
-                        ["name"] = monster.Name ?? "Unknown",
-                        ["monsterKind"] = monster.MonsterKind.ToString()
+                        ["type"] = ChoiceType.Monster.ToJsonString(),
+                        ["name"] = monster.Name ?? "Unknown"
                     };
 
                     // Check if shifted variant is available
@@ -334,7 +304,7 @@ namespace AethermancerHarness
                     choiceObj["hasShiftedVariant"] = hasShiftedVariant;
 
                     // Add full monster details
-                    choiceObj["details"] = BuildShrineMonsterDetails(monster);
+                    choiceObj["details"] = BuildMonsterDetails(monster, outputIndex);
 
                     choices.Add(choiceObj);
                     outputIndex++;
@@ -348,8 +318,8 @@ namespace AethermancerHarness
 
             var result = new JObject
             {
-                ["phase"] = "MONSTER_SELECTION",
-                ["shrineType"] = shrineType,
+                ["phase"] = GamePhase.MonsterSelection.ToJsonString(),
+                ["shrineType"] = shrineType.ToJsonString(),
                 ["selectedIndex"] = selection.GetSelectedMonsterIndex(),
                 ["currentShift"] = selection.CurrentShift.ToString(),
                 ["choices"] = choices,
@@ -367,7 +337,7 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "EQUIPMENT_SELECTION",
+                    ["phase"] = GamePhase.EquipmentSelection.ToJsonString(),
                     ["error"] = "Equipment selection menu not available"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -377,7 +347,7 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "EQUIPMENT_SELECTION",
+                    ["phase"] = GamePhase.EquipmentSelection.ToJsonString(),
                     ["error"] = "No equipment being held"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -397,7 +367,7 @@ namespace AethermancerHarness
                     var choiceObj = new JObject
                     {
                         ["index"] = i,
-                        ["type"] = "monster",
+                        ["type"] = ChoiceType.Monster.ToJsonString(),
                         ["name"] = monster.Name,
                         ["level"] = monster.Level
                     };
@@ -421,13 +391,13 @@ namespace AethermancerHarness
             choices.Add(new JObject
             {
                 ["index"] = party?.Count ?? 0,
-                ["type"] = "scrap",
+                ["type"] = ChoiceType.Scrap.ToJsonString(),
                 ["goldValue"] = scrapValue
             });
 
             var result = new JObject
             {
-                ["phase"] = "EQUIPMENT_SELECTION",
+                ["phase"] = GamePhase.EquipmentSelection.ToJsonString(),
                 ["heldEquipment"] = BuildEquipmentDetails(heldEquipment),
                 ["scrapValue"] = scrapValue,
                 ["choices"] = choices,
@@ -438,25 +408,9 @@ namespace AethermancerHarness
             return result.ToString(Newtonsoft.Json.Formatting.None);
         }
 
-        // Cached reflection for merchant menu access
-        private static System.Reflection.FieldInfo _merchantMenuField;
-
-        private static MerchantMenu GetMerchantMenu()
-        {
-            var ui = UIController.Instance;
-            if (ui == null) return null;
-
-            if (_merchantMenuField == null)
-            {
-                _merchantMenuField = typeof(UIController).GetField("MerchantMenu",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            }
-            return _merchantMenuField?.GetValue(ui) as MerchantMenu;
-        }
-
         public static bool IsInMerchantMenu()
         {
-            return GetMerchantMenu()?.IsOpen ?? false;
+            return ActionHandler.GetMerchantMenu()?.IsOpen ?? false;
         }
 
         public static string GetMerchantStateJson()
@@ -466,12 +420,12 @@ namespace AethermancerHarness
             {
                 return new JObject
                 {
-                    ["phase"] = "MERCHANT",
+                    ["phase"] = GamePhase.Merchant.ToJsonString(),
                     ["error"] = "No active merchant"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
 
-            var items = new JArray();
+            var choices = new JArray();
             var stockedItems = merchant.StockedItems;
 
             for (int i = 0; i < stockedItems.Count; i++)
@@ -490,14 +444,22 @@ namespace AethermancerHarness
                     ["canAfford"] = merchant.CanBuyItem(item, 1),
                     ["description"] = StripMarkup(item.GetDescription())
                 };
-                items.Add(itemObj);
+                choices.Add(itemObj);
             }
+
+            // Add "Leave Shop" pseudo-choice at the end
+            choices.Add(new JObject
+            {
+                ["index"] = stockedItems.Count,
+                ["type"] = ChoiceType.Close.ToJsonString(),
+                ["name"] = "Leave Shop"
+            });
 
             var result = new JObject
             {
-                ["phase"] = "MERCHANT",
+                ["phase"] = GamePhase.Merchant.ToJsonString(),
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
-                ["items"] = items,
+                ["choices"] = choices,
                 ["party"] = BuildDetailedPartyArray(),
                 ["artifacts"] = BuildArtifactsArray()
             };
@@ -505,46 +467,16 @@ namespace AethermancerHarness
             return result.ToString(Newtonsoft.Json.Formatting.None);
         }
 
-        // Cached reflection fields for dialogue access
-        private static System.Reflection.FieldInfo _currentDialogueField;
-        private static System.Reflection.FieldInfo _currentDialogueDataField;
-
-        private static DialogueInteractable GetCurrentDialogue()
-        {
-            var display = UIController.Instance?.DialogueDisplay;
-            if (display == null) return null;
-
-            if (_currentDialogueField == null)
-            {
-                _currentDialogueField = typeof(DialogueDisplay).GetField("currentDialogue",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            }
-            return _currentDialogueField?.GetValue(display) as DialogueInteractable;
-        }
-
-        private static DialogueDisplayData GetCurrentDialogueData()
-        {
-            var display = UIController.Instance?.DialogueDisplay;
-            if (display == null) return null;
-
-            if (_currentDialogueDataField == null)
-            {
-                _currentDialogueDataField = typeof(DialogueDisplay).GetField("currentDialogueData",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            }
-            return _currentDialogueDataField?.GetValue(display) as DialogueDisplayData;
-        }
-
         public static string GetDialogueStateJson()
         {
-            var dialogueInteractable = GetCurrentDialogue();
-            var dialogueData = GetCurrentDialogueData();
+            var dialogueInteractable = ActionHandler.GetCurrentDialogue();
+            var dialogueData = ActionHandler.GetCurrentDialogueData();
 
             if (dialogueInteractable == null || dialogueData == null)
             {
                 return new JObject
                 {
-                    ["phase"] = "DIALOGUE",
+                    ["phase"] = GamePhase.Dialogue.ToJsonString(),
                     ["error"] = "Dialogue data not available"
                 }.ToString(Newtonsoft.Json.Formatting.None);
             }
@@ -585,7 +517,7 @@ namespace AethermancerHarness
 
             var result = new JObject
             {
-                ["phase"] = "DIALOGUE",
+                ["phase"] = GamePhase.Dialogue.ToJsonString(),
                 ["npc"] = npcName,
                 ["dialogueText"] = dialogueData.DialogueText,
                 ["isChoiceEvent"] = dialogueData.IsChoiceEvent,
@@ -601,24 +533,22 @@ namespace AethermancerHarness
 
         private static string GetChoiceType(object option)
         {
-            if (option == null) return "unknown";
-
-            var typeName = option.GetType().Name;
+            if (option == null) return ChoiceType.Unknown.ToJsonString();
 
             if (option is ConsumableInstance ci)
             {
                 if (ci.Consumable?.ConsumableType == EConsumableType.Artifact)
-                    return "artifact";
-                return "consumable";
+                    return ChoiceType.Artifact.ToJsonString();
+                return ChoiceType.Consumable.ToJsonString();
             }
-            if (option is Monster) return "monster";
-            if (option is SkillInstance) return "skill";
-            if (option is PassiveInstance) return "trait";
-            if (option is PerkInstance) return "perk";
-            if (option is EquipmentInstance) return "equipment";
-            if (option is EquipmentManager) return "equipment";
+            if (option is Monster) return ChoiceType.Monster.ToJsonString();
+            if (option is SkillInstance) return ChoiceType.Skill.ToJsonString();
+            if (option is PassiveInstance) return ChoiceType.Trait.ToJsonString();
+            if (option is PerkInstance) return ChoiceType.Perk.ToJsonString();
+            if (option is EquipmentInstance) return ChoiceType.Equipment.ToJsonString();
+            if (option is EquipmentManager) return ChoiceType.Equipment.ToJsonString();
 
-            return typeName.ToLower();
+            return option.GetType().Name.ToLower();
         }
 
         /// <summary>
@@ -770,7 +700,7 @@ namespace AethermancerHarness
 
             var result = new JObject
             {
-                ["phase"] = "SKILL_SELECTION",
+                ["phase"] = GamePhase.SkillSelection.ToJsonString(),
                 ["levelUpType"] = levelUpType == SkillPicker.ELevelUpType.PickSpell ? "action" : "trait",
                 ["monster"] = levelingMonster != null
                     ? new JObject { ["index"] = monsterIndex, ["name"] = levelingMonster.Name, ["level"] = levelingMonster.Level }
@@ -816,56 +746,6 @@ namespace AethermancerHarness
             }
 
             return obj;
-        }
-
-        public static string GetPartyStateJson()
-        {
-            var party = MonsterManager.Instance?.Active;
-            if (party == null) return "[]";
-
-            var arr = new JArray();
-            for (int i = 0; i < party.Count; i++)
-                arr.Add(BuildPartyMonster(party[i], i));
-
-            return arr.ToString(Newtonsoft.Json.Formatting.None);
-        }
-
-        private static JObject BuildPartyMonster(Monster m, int index)
-        {
-            var skills = new JArray();
-            foreach (var skill in m.SkillManager?.Actions ?? new List<SkillInstance>())
-            {
-                skills.Add(new JObject
-                {
-                    ["name"] = StripMarkup(skill.Action?.Name ?? ""),
-                    ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
-                    ["cost"] = BuildAetherObject(skill.GetActionCost()),
-                    ["category"] = GetActionCategory(skill),
-                    ["subTypes"] = GetActionSubTypes(skill)
-                });
-            }
-
-            return new JObject
-            {
-                ["index"] = index,
-                ["name"] = StripMarkup(m.Name),
-                ["level"] = m.Level,
-                ["hp"] = m.CurrentHealth,
-                ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
-                ["currentExp"] = m.LevelManager?.CurrentExp ?? 0,
-                ["expNeeded"] = m.LevelManager?.ExpNeededTotal ?? 0,
-                ["worthinessLevel"] = m.Worthiness?.WorthinessLevel ?? 0,
-                ["currentWorthiness"] = m.Worthiness?.CurrentWorthiness ?? 0,
-                ["worthinessNeeded"] = m.Worthiness?.CurrentRequiredWorthinessTotal ?? 0,
-                ["skills"] = skills,
-                ["traits"] = BuildTraitsArray(m)
-            };
-        }
-
-        public static string ToText()
-        {
-            // Text format not supported - use JSON
-            return "Text format not supported. Use JSON.";
         }
 
         public static string GetValidActionsJson()
@@ -952,13 +832,13 @@ namespace AethermancerHarness
                 enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false));
 
             var stateManager = CombatStateManager.Instance;
-            string combatResult = null;
+            string combatResultStr = null;
             if (stateManager?.State?.CurrentState?.ID == CombatStateManager.EState.CombatFinished)
-                combatResult = stateManager.WonEncounter ? "VICTORY" : "DEFEAT";
+                combatResultStr = stateManager.WonEncounter ? CombatResult.Victory.ToJsonString() : CombatResult.Defeat.ToJsonString();
 
             var result = new JObject
             {
-                ["phase"] = "COMBAT",
+                ["phase"] = GamePhase.Combat.ToJsonString(),
                 ["round"] = cc.Timeline?.CurrentRound ?? 0,
                 ["readyForInput"] = ActionHandler.IsReadyForInput(),
                 ["inputStatus"] = ActionHandler.GetInputReadyStatus(),
@@ -972,7 +852,7 @@ namespace AethermancerHarness
                 ["gold"] = InventoryManager.Instance?.Gold ?? 0,
                 ["artifacts"] = BuildArtifactsArray(),
                 ["inventory"] = BuildInventoryObject(),
-                ["combatResult"] = combatResult
+                ["combatResult"] = combatResultStr
             };
 
             return result.ToString(Newtonsoft.Json.Formatting.None);
@@ -985,18 +865,18 @@ namespace AethermancerHarness
             var currentIdx = current != null ? (current.BelongsToPlayer ? cc.PlayerMonsters.IndexOf(current) : -1) : -1;
 
             var stateManager = CombatStateManager.Instance;
-            string combatResult = null;
+            string combatResultStr = null;
             if (stateManager?.State?.CurrentState?.ID == CombatStateManager.EState.CombatFinished)
-                combatResult = stateManager.WonEncounter ? "VICTORY" : "DEFEAT";
+                combatResultStr = stateManager.WonEncounter ? CombatResult.Victory.ToJsonString() : CombatResult.Defeat.ToJsonString();
 
             var result = new JObject
             {
-                ["phase"] = "COMBAT",
+                ["phase"] = GamePhase.Combat.ToJsonString(),
                 ["playerAether"] = BuildAetherObject(cc.PlayerAether?.Aether),
                 ["currentActorIndex"] = currentIdx,
                 ["isPlayerTurn"] = current?.BelongsToPlayer ?? false,
                 ["readyForInput"] = ActionHandler.IsReadyForInput(),
-                ["combatResult"] = combatResult
+                ["combatResult"] = combatResultStr
             };
 
             if (before != null && AetherChanged(before.EnemyAether, cc.EnemyAether?.Aether))
@@ -1282,7 +1162,7 @@ namespace AethermancerHarness
 
             var result = new JObject
             {
-                ["phase"] = "EXPLORATION",
+                ["phase"] = GamePhase.Exploration.ToJsonString(),
                 ["player"] = new JObject { ["x"] = (double)playerPos.x, ["y"] = (double)playerPos.y, ["z"] = (double)playerPos.z },
                 ["area"] = area,
                 ["zone"] = zone,
@@ -1348,7 +1228,7 @@ namespace AethermancerHarness
                 var pos = spring.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "AETHER_SPRING",
+                    ["type"] = InteractableType.AetherSpring.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["used"] = spring.WasUsedUp
                 });
@@ -1360,7 +1240,7 @@ namespace AethermancerHarness
                 var pos = mg.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "MONSTER_GROUP",
+                    ["type"] = InteractableType.MonsterGroup.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["defeated"] = mg.WasUsedUp
                 });
@@ -1372,7 +1252,7 @@ namespace AethermancerHarness
                 var pos = chest.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "CHEST",
+                    ["type"] = InteractableType.Chest.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["opened"] = chest.WasUsedUp
                 });
@@ -1383,7 +1263,7 @@ namespace AethermancerHarness
                 var pos = map.MerchantInteractable.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "MERCHANT",
+                    ["type"] = InteractableType.Merchant.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z
                 });
             }
@@ -1393,7 +1273,7 @@ namespace AethermancerHarness
                 var pos = map.MonsterShrine.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "MONSTER_SHRINE",
+                    ["type"] = InteractableType.MonsterShrine.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["used"] = map.MonsterShrine.WasUsedUp
                 });
@@ -1410,7 +1290,7 @@ namespace AethermancerHarness
                 var hasEvent = npc.DialogueCharacter?.EventOptions?.Count > 0;
                 arr.Add(new JObject
                 {
-                    ["type"] = "NPC",
+                    ["type"] = InteractableType.Npc.ToJsonString(),
                     ["index"] = npcIndex++,
                     ["name"] = npcName,
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
@@ -1425,7 +1305,7 @@ namespace AethermancerHarness
                 var pos = evt.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "EVENT",
+                    ["type"] = InteractableType.Event.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["completed"] = evt.WasUsedUp
                 });
@@ -1437,7 +1317,7 @@ namespace AethermancerHarness
                 var pos = secret.transform.position;
                 arr.Add(new JObject
                 {
-                    ["type"] = "SECRET_ROOM",
+                    ["type"] = InteractableType.SecretRoom.ToJsonString(),
                     ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z,
                     ["found"] = secret.WasUsedUp
                 });
@@ -1453,7 +1333,7 @@ namespace AethermancerHarness
                     var pos = startRun.transform.position;
                     arr.Add(new JObject
                     {
-                        ["type"] = "START_RUN",
+                        ["type"] = InteractableType.StartRun.ToJsonString(),
                         ["x"] = (double)pos.x, ["y"] = (double)pos.y, ["z"] = (double)pos.z
                     });
                 }
@@ -1497,12 +1377,12 @@ namespace AethermancerHarness
             if (party == null) return arr;
 
             for (int i = 0; i < party.Count; i++)
-                arr.Add(BuildDetailedPartyMonster(party[i], i));
+                arr.Add(BuildMonsterDetails(party[i], i));
 
             return arr;
         }
 
-        private static JObject BuildDetailedPartyMonster(Monster m, int index)
+        private static JArray BuildActionsArray(Monster m)
         {
             var actions = new JArray();
             int actionIdx = 0;
@@ -1528,7 +1408,11 @@ namespace AethermancerHarness
                 });
                 actionIdx++;
             }
+            return actions;
+        }
 
+        private static JObject BuildMonsterDetails(Monster m, int index)
+        {
             return new JObject
             {
                 ["index"] = index,
@@ -1542,61 +1426,8 @@ namespace AethermancerHarness
                 ["worthinessLevel"] = m.Worthiness?.WorthinessLevel ?? 0,
                 ["currentWorthiness"] = m.Worthiness?.CurrentWorthiness ?? 0,
                 ["worthinessNeeded"] = m.Worthiness?.CurrentRequiredWorthinessTotal ?? 0,
-                ["actions"] = actions,
+                ["actions"] = BuildActionsArray(m),
                 ["traits"] = BuildTraitsArray(m)
-            };
-        }
-
-        private static JObject BuildShrineMonsterDetails(Monster m)
-        {
-            // Build actions array with full details
-            var actions = new JArray();
-            int actionIdx = 0;
-            foreach (var skill in m.SkillManager?.Actions ?? new List<SkillInstance>())
-            {
-                var elements = new JArray();
-                if (skill.Action?.Elements != null)
-                {
-                    foreach (var e in skill.Action.Elements)
-                        elements.Add(e.ToString());
-                }
-
-                actions.Add(new JObject
-                {
-                    ["index"] = actionIdx,
-                    ["name"] = StripMarkup(skill.Action?.Name ?? ""),
-                    ["description"] = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
-                    ["cost"] = BuildAetherObject(skill.GetActionCost()),
-                    ["targetType"] = skill.Action?.TargetType.ToString() ?? "Unknown",
-                    ["elements"] = elements,
-                    ["category"] = GetActionCategory(skill),
-                    ["subTypes"] = GetActionSubTypes(skill)
-                });
-                actionIdx++;
-            }
-
-            // Get signature trait info
-            var signatureTrait = m.SkillManager?.SignatureTraitInstance;
-            JObject signatureTraitObj = null;
-            if (signatureTrait?.Trait != null)
-            {
-                signatureTraitObj = new JObject
-                {
-                    ["name"] = StripMarkup(signatureTrait.Trait.Name ?? ""),
-                    ["description"] = StripMarkup(signatureTrait.Trait.GetDescription(signatureTrait) ?? ""),
-                    ["isAura"] = signatureTrait.Trait.IsAura()
-                };
-            }
-
-            return new JObject
-            {
-                ["name"] = StripMarkup(m.Name),
-                ["monsterKind"] = m.MonsterKind.ToString(),
-                ["level"] = m.Level,
-                ["maxHp"] = m.Stats?.MaxHealth?.ValueInt ?? 0,
-                ["actions"] = actions,
-                ["traits"] = BuildTraitsArray(m),
-                ["signatureTrait"] = signatureTraitObj
             };
         }
 

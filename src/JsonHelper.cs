@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
 
 namespace AethermancerHarness
 {
@@ -29,6 +30,21 @@ namespace AethermancerHarness
             var token = obj[key];
             if (token == null) return defaultValue;
             return token.Value<T>();
+        }
+
+        public static string Error(string message)
+        {
+            return Serialize(new { success = false, error = message });
+        }
+
+        public static string Error(string message, object details)
+        {
+            return new JObject
+            {
+                ["success"] = false,
+                ["error"] = message,
+                ["details"] = JObject.FromObject(details, JsonSerializer.Create(Settings))
+            }.ToString(Formatting.None);
         }
     }
 }

@@ -85,7 +85,7 @@ namespace AethermancerHarness
                     case "/state":
                         var format = request.QueryString["format"];
                         if (format == "text")
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Text format not supported. Use JSON." }), 400);
+                            (responseBody, statusCode) = (JsonHelper.Error("Text format not supported. Use JSON."), 400);
                         else
                             responseBody = StateSerializer.ToJson();
                         break;
@@ -98,14 +98,14 @@ namespace AethermancerHarness
                         if (method == "POST")
                             responseBody = HandleCombatAction(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/preview":
                         if (method == "POST")
                             responseBody = HandleCombatPreview(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/enemy-actions":
@@ -116,35 +116,35 @@ namespace AethermancerHarness
                         if (method == "POST")
                             responseBody = HandleTeleport(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/exploration/interact":
                         if (method == "POST")
                             responseBody = ActionHandler.ExecuteInteract();
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/combat/start":
                         if (method == "POST")
                             responseBody = HandleCombatStart(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/skill-select":
                         if (method == "POST")
                             responseBody = HandleSkillSelect(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/npc/interact":
                         if (method == "POST")
                             responseBody = HandleNpcInteract(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/choice":
@@ -152,28 +152,14 @@ namespace AethermancerHarness
                         if (method == "POST")
                             responseBody = HandleChoice(ReadBody(request));
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     case "/merchant/interact":
                         if (method == "POST")
                             responseBody = ActionHandler.ExecuteMerchantInteract();
                         else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
-                        break;
-
-                    case "/merchant/buy":
-                        if (method == "POST")
-                            responseBody = HandleMerchantBuy(ReadBody(request));
-                        else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
-                        break;
-
-                    case "/merchant/close":
-                        if (method == "POST")
-                            responseBody = ActionHandler.ExecuteMerchantClose();
-                        else
-                            (responseBody, statusCode) = (JsonHelper.Serialize(new { error = "Method not allowed" }), 405);
+                            (responseBody, statusCode) = (JsonHelper.Error("Method not allowed"), 405);
                         break;
 
                     default:
@@ -185,7 +171,7 @@ namespace AethermancerHarness
                                 "/health", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
                                 "/exploration/interact", "/skill-select", "/npc/interact", "/choice",
-                                "/merchant/interact", "/merchant/buy", "/merchant/close"
+                                "/merchant/interact"
                             }
                         });
                         statusCode = 404;
@@ -197,7 +183,7 @@ namespace AethermancerHarness
             catch (System.Exception e)
             {
                 _logger.LogError($"Error handling request: {e}");
-                SendResponse(response, JsonHelper.Serialize(new { error = e.Message }), 500);
+                SendResponse(response, JsonHelper.Error(e.Message), 500);
             }
         }
 
@@ -245,9 +231,10 @@ namespace AethermancerHarness
             var json = JsonHelper.Parse(body);
             var consumableIndex = JsonHelper.Value(json, "consumableIndex", -1);
             var skillIndex = JsonHelper.Value(json, "skillIndex", -1);
+            var skillName = JsonHelper.Value(json, "skillName", (string)null);
 
-            if (consumableIndex >= 0 && skillIndex >= 0)
-                return JsonHelper.Serialize(new { error = "Cannot specify both consumableIndex and skillIndex" });
+            if (consumableIndex >= 0 && (skillIndex >= 0 || !string.IsNullOrEmpty(skillName)))
+                return JsonHelper.Error("Cannot specify both consumableIndex and skill (skillIndex/skillName)");
 
             if (consumableIndex >= 0)
             {
@@ -256,8 +243,9 @@ namespace AethermancerHarness
             }
 
             var actorIndex = JsonHelper.Value(json, "actorIndex", -1);
+            var actorName = JsonHelper.Value(json, "actorName", (string)null);
             var targetIndex2 = JsonHelper.Value(json, "targetIndex", -1);
-            return ActionHandler.ExecuteCombatAction(actorIndex, skillIndex, targetIndex2);
+            return ActionHandler.ExecuteCombatAction(actorIndex, actorName, skillIndex, skillName, targetIndex2);
         }
 
         private string HandleCombatPreview(string body)
@@ -265,9 +253,10 @@ namespace AethermancerHarness
             var json = JsonHelper.Parse(body);
             var consumableIndex = JsonHelper.Value(json, "consumableIndex", -1);
             var skillIndex = JsonHelper.Value(json, "skillIndex", -1);
+            var skillName = JsonHelper.Value(json, "skillName", (string)null);
 
-            if (consumableIndex >= 0 && skillIndex >= 0)
-                return JsonHelper.Serialize(new { error = "Cannot specify both consumableIndex and skillIndex" });
+            if (consumableIndex >= 0 && (skillIndex >= 0 || !string.IsNullOrEmpty(skillName)))
+                return JsonHelper.Error("Cannot specify both consumableIndex and skill (skillIndex/skillName)");
 
             if (consumableIndex >= 0)
             {
@@ -276,8 +265,9 @@ namespace AethermancerHarness
             }
 
             var actorIndex = JsonHelper.Value(json, "actorIndex", -1);
+            var actorName = JsonHelper.Value(json, "actorName", (string)null);
             var targetIndex2 = JsonHelper.Value(json, "targetIndex", -1);
-            return ActionHandler.ExecutePreview(actorIndex, skillIndex, targetIndex2);
+            return ActionHandler.ExecutePreview(actorIndex, actorName, skillIndex, skillName, targetIndex2);
         }
 
         private string HandleTeleport(string body)
@@ -311,7 +301,7 @@ namespace AethermancerHarness
 
             var skillIndex = JsonHelper.Value(json, "skillIndex", -1);
             if (skillIndex < -1 || skillIndex > 2)
-                return JsonHelper.Serialize(new { error = $"Invalid skillIndex: {skillIndex}. Use 0-2 for skills, -1 for max health." });
+                return JsonHelper.Error($"Invalid skillIndex: {skillIndex}. Use 0-2 for skills, -1 for max health.");
 
             return ActionHandler.ExecuteSkillSelection(skillIndex, reroll: false);
         }
@@ -322,7 +312,7 @@ namespace AethermancerHarness
             var npcIndex = JsonHelper.Value(json, "npcIndex", -1);
 
             if (npcIndex < 0)
-                return JsonHelper.Serialize(new { error = "npcIndex is required and must be >= 0" });
+                return JsonHelper.Error("npcIndex is required and must be >= 0");
 
             return ActionHandler.ExecuteNpcInteract(npcIndex);
         }
@@ -334,21 +324,9 @@ namespace AethermancerHarness
             var shift = JsonHelper.Value(json, "shift", (string)null); // "normal" or "shifted"
 
             if (choiceIndex < 0)
-                return JsonHelper.Serialize(new { error = "choiceIndex is required and must be >= 0" });
+                return JsonHelper.Error("choiceIndex is required and must be >= 0");
 
             return ActionHandler.ExecuteChoice(choiceIndex, shift);
-        }
-
-        private string HandleMerchantBuy(string body)
-        {
-            var json = JsonHelper.Parse(body);
-            var itemIndex = JsonHelper.Value(json, "itemIndex", -1);
-            var quantity = JsonHelper.Value(json, "quantity", 1);
-
-            if (itemIndex < 0)
-                return JsonHelper.Serialize(new { error = "itemIndex is required and must be >= 0" });
-
-            return ActionHandler.ExecuteMerchantBuy(itemIndex, quantity);
         }
     }
 }

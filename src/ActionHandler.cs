@@ -16,8 +16,13 @@ namespace AethermancerHarness
         internal static readonly MethodInfo GetDescriptionDamageMethod;
         internal static readonly MethodInfo ContinueMethod;
         internal static readonly MethodInfo InputConfirmMethod;
-        internal static readonly MethodInfo ConfirmVoidBlitzTargetMethod;
         internal static readonly MethodInfo ConfirmSelectionMethod;
+
+        // Cached reflection fields for UI access
+        internal static readonly FieldInfo EndOfRunMenuField;
+        internal static readonly FieldInfo MerchantMenuField;
+        internal static readonly FieldInfo DialogueCurrentField;
+        internal static readonly FieldInfo DialogueDataField;
 
         static ActionHandler()
         {
@@ -33,18 +38,54 @@ namespace AethermancerHarness
                 "InputConfirm",
                 BindingFlags.NonPublic | BindingFlags.Instance);
 
-            ConfirmVoidBlitzTargetMethod = typeof(PlayerMovementController).GetMethod(
-                "ConfirmVoidBlitzTarget",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-
             ConfirmSelectionMethod = typeof(MonsterShrineMenu).GetMethod(
                 "ConfirmSelection",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            EndOfRunMenuField = typeof(UIController).GetField("EndOfRunMenu",
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+
+            MerchantMenuField = typeof(UIController).GetField("MerchantMenu",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            DialogueCurrentField = typeof(DialogueDisplay).GetField("currentDialogue",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+
+            DialogueDataField = typeof(DialogueDisplay).GetField("currentDialogueData",
                 BindingFlags.NonPublic | BindingFlags.Instance);
         }
 
         // =====================================================
         // SHARED UTILITIES
         // =====================================================
+
+        internal static EndOfRunMenu GetEndOfRunMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+            return EndOfRunMenuField?.GetValue(ui) as EndOfRunMenu;
+        }
+
+        internal static MerchantMenu GetMerchantMenu()
+        {
+            var ui = UIController.Instance;
+            if (ui == null) return null;
+            return MerchantMenuField?.GetValue(ui) as MerchantMenu;
+        }
+
+        internal static DialogueInteractable GetCurrentDialogue()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+            return DialogueCurrentField?.GetValue(display) as DialogueInteractable;
+        }
+
+        internal static DialogueDisplayData GetCurrentDialogueData()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null) return null;
+            return DialogueDataField?.GetValue(display) as DialogueDisplayData;
+        }
 
         internal static bool TimedOut(DateTime startTime, int timeoutMs)
         {

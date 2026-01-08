@@ -41,26 +41,26 @@ namespace AethermancerHarness
         public static string GetInputReadyStatus()
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return "NotInCombat";
+                return InputReadyStatus.NotInCombat.ToJsonString();
 
             var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
             if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return $"CombatEnded:{currentState}";
+                return $"{InputReadyStatus.CombatEnded.ToJsonString()}:{currentState}";
 
             var cc = CombatController.Instance;
             if (cc == null)
-                return "NoCombatController";
+                return InputReadyStatus.NoCombatController.ToJsonString();
 
             if (cc.CurrentMonster == null)
-                return "NoCurrentMonster";
+                return InputReadyStatus.NoCurrentMonster.ToJsonString();
             if (!cc.CurrentMonster.BelongsToPlayer)
-                return $"EnemyTurn:{cc.CurrentMonster.Name}";
+                return $"{InputReadyStatus.EnemyTurn.ToJsonString()}:{cc.CurrentMonster.Name}";
             if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return $"TriggersPending:{CombatTimeline.Instance.TriggerStack.Count}";
+                return $"{InputReadyStatus.TriggersPending.ToJsonString()}:{CombatTimeline.Instance.TriggerStack.Count}";
             if (cc.CurrentMonster.State?.ActionInstance != null)
-                return $"ActionExecuting:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
+                return $"{InputReadyStatus.ActionExecuting.ToJsonString()}:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
 
-            return "Ready";
+            return InputReadyStatus.Ready.ToJsonString();
         }
 
         public static bool WaitForReady(int timeoutMs = 30000)
@@ -73,6 +73,26 @@ namespace AethermancerHarness
                 System.Threading.Thread.Sleep(50);
             }
             return false;
+        }
+
+        // =====================================================
+        // NAME-BASED RESOLUTION
+        // =====================================================
+
+        private static (int index, string error) ResolveActorByName(string name, CombatController cc)
+        {
+            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
+                if (cc.PlayerMonsters[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return (i, null);
+            return (-1, $"No allied monster named '{name}'");
+        }
+
+        private static (int index, string error) ResolveSkillByName(string name, Monster actor)
+        {
+            for (int i = 0; i < actor.SkillManager.Actions.Count; i++)
+                if (actor.SkillManager.Actions[i].Action.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return (i, null);
+            return (-1, $"No skill named '{name}' for {actor.Name}");
         }
 
         // =====================================================
@@ -117,34 +137,56 @@ namespace AethermancerHarness
 
         public static string ExecuteCombatAction(int actorIndex, int skillIndex, int targetIndex)
         {
+            return ExecuteCombatAction(actorIndex, null, skillIndex, null, targetIndex);
+        }
+
+        public static string ExecuteCombatAction(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
+        {
             if (!IsReadyForInput())
-            {
-                return JsonHelper.Serialize(new
-                {
-                    success = false,
-                    error = "Game not ready for input",
-                    status = GetInputReadyStatus()
-                });
-            }
+                return JsonHelper.Error("Game not ready for input", new { status = GetInputReadyStatus() });
 
             var cc = CombatController.Instance;
 
-            if (actorIndex < 0 || actorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid actor index: {actorIndex}" });
+            // Resolve actor: name takes precedence if index is -1
+            int resolvedActorIndex = actorIndex;
+            if (!string.IsNullOrEmpty(actorName))
+            {
+                if (actorIndex >= 0)
+                    return JsonHelper.Error("Cannot specify both actorIndex and actorName");
+                var (idx, err) = ResolveActorByName(actorName, cc);
+                if (err != null)
+                    return JsonHelper.Error(err);
+                resolvedActorIndex = idx;
+            }
 
-            var actor = cc.PlayerMonsters[actorIndex];
+            if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
+                return JsonHelper.Error($"Invalid actor index: {resolvedActorIndex}");
 
-            if (skillIndex < 0 || skillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid skill index: {skillIndex}" });
+            var actor = cc.PlayerMonsters[resolvedActorIndex];
 
-            var skill = actor.SkillManager.Actions[skillIndex];
+            // Resolve skill: name takes precedence if index is -1
+            int resolvedSkillIndex = skillIndex;
+            if (!string.IsNullOrEmpty(skillName))
+            {
+                if (skillIndex >= 0)
+                    return JsonHelper.Error("Cannot specify both skillIndex and skillName");
+                var (idx, err) = ResolveSkillByName(skillName, actor);
+                if (err != null)
+                    return JsonHelper.Error(err);
+                resolvedSkillIndex = idx;
+            }
+
+            if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
+                return JsonHelper.Error($"Invalid skill index: {resolvedSkillIndex}");
+
+            var skill = actor.SkillManager.Actions[resolvedSkillIndex];
 
             if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Serialize(new { success = false, error = $"Skill cannot be used: {skill.Action.Name}" });
+                return JsonHelper.Error($"Skill cannot be used: {skill.Action.Name}");
 
             var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
             if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
+                return JsonHelper.Error(error);
 
             Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
             var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
@@ -156,35 +198,28 @@ namespace AethermancerHarness
         public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
         {
             if (!IsReadyForInput())
-            {
-                return JsonHelper.Serialize(new
-                {
-                    success = false,
-                    error = "Game not ready for input",
-                    status = GetInputReadyStatus()
-                });
-            }
+                return JsonHelper.Error("Game not ready for input", new { status = GetInputReadyStatus() });
 
             var cc = CombatController.Instance;
             var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
             if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid consumable index: {consumableIndex}" });
+                return JsonHelper.Error($"Invalid consumable index: {consumableIndex}");
 
             var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
 
             if (currentMonster == null)
-                return JsonHelper.Serialize(new { success = false, error = "No current monster to use consumable" });
+                return JsonHelper.Error("No current monster to use consumable");
 
             consumable.Owner = currentMonster;
 
             if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Serialize(new { success = false, error = $"Consumable cannot be used: {consumable.Consumable?.Name}" });
+                return JsonHelper.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
 
             var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
             if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
+                return JsonHelper.Error(error);
 
             Plugin.Log.LogInfo($"Using consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
             var snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
@@ -213,7 +248,7 @@ namespace AethermancerHarness
                 {
                     ["success"] = true,
                     ["action"] = actionName,
-                    ["combatResult"] = "DEFEAT",
+                    ["combatResult"] = CombatResult.Defeat.ToJsonString(),
                     ["state"] = JObject.Parse(StateSerializer.ToJson())
                 };
                 return result.ToString(Newtonsoft.Json.Formatting.None);
@@ -251,27 +286,56 @@ namespace AethermancerHarness
 
         public static string ExecutePreview(int actorIndex, int skillIndex, int targetIndex)
         {
+            return ExecutePreview(actorIndex, null, skillIndex, null, targetIndex);
+        }
+
+        public static string ExecutePreview(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
+        {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
+                return JsonHelper.Error("Not in combat");
 
             var cc = CombatController.Instance;
 
-            if (actorIndex < 0 || actorIndex >= cc.PlayerMonsters.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid actor index: {actorIndex}" });
+            // Resolve actor: name takes precedence if index is -1
+            int resolvedActorIndex = actorIndex;
+            if (!string.IsNullOrEmpty(actorName))
+            {
+                if (actorIndex >= 0)
+                    return JsonHelper.Error("Cannot specify both actorIndex and actorName");
+                var (idx, err) = ResolveActorByName(actorName, cc);
+                if (err != null)
+                    return JsonHelper.Error(err);
+                resolvedActorIndex = idx;
+            }
 
-            var actor = cc.PlayerMonsters[actorIndex];
+            if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
+                return JsonHelper.Error($"Invalid actor index: {resolvedActorIndex}");
 
-            if (skillIndex < 0 || skillIndex >= actor.SkillManager.Actions.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid skill index: {skillIndex}" });
+            var actor = cc.PlayerMonsters[resolvedActorIndex];
 
-            var skill = actor.SkillManager.Actions[skillIndex];
+            // Resolve skill: name takes precedence if index is -1
+            int resolvedSkillIndex = skillIndex;
+            if (!string.IsNullOrEmpty(skillName))
+            {
+                if (skillIndex >= 0)
+                    return JsonHelper.Error("Cannot specify both skillIndex and skillName");
+                var (idx, err) = ResolveSkillByName(skillName, actor);
+                if (err != null)
+                    return JsonHelper.Error(err);
+                resolvedSkillIndex = idx;
+            }
+
+            if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
+                return JsonHelper.Error($"Invalid skill index: {resolvedSkillIndex}");
+
+            var skill = actor.SkillManager.Actions[resolvedSkillIndex];
 
             if (!skill.Action.CanUseAction(skill))
-                return JsonHelper.Serialize(new { success = false, error = $"Skill cannot be used: {skill.Action.Name}" });
+                return JsonHelper.Error($"Skill cannot be used: {skill.Action.Name}");
 
             var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
             if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
+                return JsonHelper.Error(error);
 
             Plugin.Log.LogInfo($"Previewing action: {actor.Name} uses {skill.Action.Name} on {GetTargetName(target)}");
             return ExecutePreviewInternal(cc, actor, skill, target);
@@ -280,28 +344,28 @@ namespace AethermancerHarness
         public static string ExecuteConsumablePreview(int consumableIndex, int targetIndex)
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
+                return JsonHelper.Error("Not in combat");
 
             var cc = CombatController.Instance;
             var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
             if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonHelper.Serialize(new { success = false, error = $"Invalid consumable index: {consumableIndex}" });
+                return JsonHelper.Error($"Invalid consumable index: {consumableIndex}");
 
             var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
 
             if (currentMonster == null)
-                return JsonHelper.Serialize(new { success = false, error = "No current monster for preview" });
+                return JsonHelper.Error("No current monster for preview");
 
             consumable.Owner = currentMonster;
 
             if (!consumable.Action.CanUseAction(consumable))
-                return JsonHelper.Serialize(new { success = false, error = $"Consumable cannot be used: {consumable.Consumable?.Name}" });
+                return JsonHelper.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
 
             var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
             if (target == null)
-                return JsonHelper.Serialize(new { success = false, error });
+                return JsonHelper.Error(error);
 
             Plugin.Log.LogInfo($"Previewing consumable: {consumable.Consumable?.Name} on {GetTargetName(target)}");
             return ExecutePreviewInternal(cc, currentMonster, consumable, target);
@@ -521,7 +585,7 @@ namespace AethermancerHarness
         public static string GetEnemyActions()
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return JsonHelper.Serialize(new { success = false, error = "Not in combat" });
+                return JsonHelper.Error("Not in combat");
 
             var cc = CombatController.Instance;
             var enemies = new JArray();
