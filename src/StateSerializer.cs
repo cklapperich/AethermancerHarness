@@ -1308,6 +1308,47 @@ namespace AethermancerHarness
                 }
             }
 
+            // Portals (ExitInteractables)
+            var exitInteractables = propGen.ExitInteractables;
+            if (exitInteractables != null)
+            {
+                // Use reflection to access private nextMapBubble field
+                var nextMapBubbleField = typeof(ExitInteractable).GetField(
+                    "nextMapBubble",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                for (int i = 0; i < exitInteractables.Count; i++)
+                {
+                    var go = exitInteractables[i];
+                    if (go == null) continue;
+
+                    var exitInteractable = go.GetComponent<ExitInteractable>();
+                    if (exitInteractable == null) continue;
+
+                    var pos = go.transform.position;
+                    string portalType = "None";
+
+                    if (nextMapBubbleField != null)
+                    {
+                        var mapBubble = nextMapBubbleField.GetValue(exitInteractable) as MapBubble;
+                        if (mapBubble != null)
+                            portalType = mapBubble.Customization.ToString();
+                    }
+
+                    list.Add(new InteractableInfo
+                    {
+                        Type = InteractableType.Portal,
+                        Index = i,
+                        X = pos.x,
+                        Y = pos.y,
+                        Z = pos.z,
+                        Name = $"Portal ({portalType})",
+                        PortalType = portalType,
+                        Used = exitInteractable.WasUsedUp
+                    });
+                }
+            }
+
             return list;
         }
 

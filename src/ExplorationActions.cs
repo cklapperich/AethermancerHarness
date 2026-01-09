@@ -322,6 +322,48 @@ namespace AethermancerHarness
         }
 
         // =====================================================
+        // TYPED INTERACT (with type and index)
+        // =====================================================
+
+        public static string ExecuteInteract(string type, int index)
+        {
+            if (GameStateManager.Instance?.IsCombat ?? false)
+                return JsonConfig.Error("Cannot interact during combat");
+
+            // Handle Portal interaction
+            if (type == "portal" || type == "Portal")
+            {
+                var propGen = LevelGenerator.Instance?.PropGenerator;
+                if (propGen == null)
+                    return JsonConfig.Error("PropGenerator not available");
+
+                var exitInteractables = propGen.ExitInteractables;
+                if (exitInteractables == null || index < 0 || index >= exitInteractables.Count)
+                    return JsonConfig.Error($"Invalid portal index: {index}");
+
+                var portalGO = exitInteractables[index];
+                if (portalGO == null)
+                    return JsonConfig.Error("Portal is null");
+
+                var exitInteractable = portalGO.GetComponent<ExitInteractable>();
+                if (exitInteractable == null)
+                    return JsonConfig.Error("Portal component not found");
+
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    // Teleport to portal and interact
+                    var portalPos = portalGO.transform.position;
+                    PlayerMovementController.Instance.transform.position = portalPos;
+                    exitInteractable.StartBaseInteraction();
+                });
+
+                return JsonConfig.Serialize(new { success = true, action = "portal_enter" });
+            }
+
+            return JsonConfig.Error($"Unknown interactable type: {type}");
+        }
+
+        // =====================================================
         // LOOT ALL (BREAK DESTRUCTIBLES + COLLECT)
         // =====================================================
 

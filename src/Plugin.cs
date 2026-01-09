@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
@@ -17,6 +18,13 @@ namespace AethermancerHarness
         private bool _hasLoggedCombatAccess = false;
         private bool _hasLoggedGameReady = false;
         private HarnessServer _server;
+
+        // Configuration
+        private static ConfigEntry<bool> _watchableModeConfig;
+        private static ConfigEntry<int> _watchableDelayMsConfig;
+
+        public static bool WatchableMode => _watchableModeConfig?.Value ?? false;
+        public static int WatchableDelayMs => _watchableDelayMsConfig?.Value ?? 500;
 
         // Main thread dispatcher for running Unity API calls from background threads
         private static readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -89,6 +97,21 @@ namespace AethermancerHarness
             Log = Logger;
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
             Logger.LogInfo($"AethermancerHarness v{PluginInfo.PLUGIN_VERSION} loaded! (Main thread ID: {_mainThreadId})");
+
+            // Bind configuration
+            _watchableModeConfig = Config.Bind(
+                "Features",
+                "WatchableMode",
+                false,
+                "Enable watchable mode - slows down NPC interactions for streaming"
+            );
+            _watchableDelayMsConfig = Config.Bind(
+                "Features",
+                "WatchableDelayMs",
+                500,
+                "Delay in milliseconds between dialogue advances in watchable mode"
+            );
+            Logger.LogInfo($"Watchable mode: {WatchableMode}, delay: {WatchableDelayMs}ms");
 
             // Initialize Harmony patches
             Logger.LogInfo("Initializing Harmony patches...");

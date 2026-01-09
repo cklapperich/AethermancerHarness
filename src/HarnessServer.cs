@@ -152,8 +152,9 @@ namespace AethermancerHarness
                     case "/exploration/interact":
                         if (method == "POST")
                         {
+                            var body = ReadBody(request);
                             string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.ExecuteInteract());
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleExplorationInteract(body));
                             responseBody = result;
                         }
                         else
@@ -354,6 +355,24 @@ namespace AethermancerHarness
                 return JsonConfig.Error("npcIndex is required and must be >= 0");
 
             return ActionHandler.ExecuteNpcInteract(npcIndex);
+        }
+
+        private string HandleExplorationInteract(string body)
+        {
+            // If no body, use the parameterless interact (backwards compatible)
+            if (string.IsNullOrWhiteSpace(body))
+                return ActionHandler.ExecuteInteract();
+
+            var json = JsonConfig.Parse(body);
+            var type = JsonConfig.Value(json, "type", (string)null);
+            var index = JsonConfig.Value(json, "index", -1);
+
+            // If no type specified, use parameterless interact
+            if (string.IsNullOrWhiteSpace(type))
+                return ActionHandler.ExecuteInteract();
+
+            // Otherwise, dispatch to the typed interact handler
+            return ActionHandler.ExecuteInteract(type, index);
         }
 
         private string HandleChoice(string body)

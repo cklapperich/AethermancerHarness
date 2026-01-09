@@ -32,7 +32,8 @@ namespace AethermancerHarness
         Event,
         SecretRoom,
         StartRun,
-        LootDropper
+        LootDropper,
+        Portal
     }
 
     /// <summary>

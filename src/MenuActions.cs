@@ -551,8 +551,8 @@ namespace AethermancerHarness
                 // Run UI operations on main thread
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Set the selection index (use adjustedIndex to account for random option)
-                    selection.SetSelectedIndex(adjustedIndex);
+                    // Set the selection index (use adjustedIndex + 1 because game is 1-indexed)
+                    selection.SetSelectedIndex(adjustedIndex + 1);
 
                     // Set the shift (only applies to non-random monsters with shifted variants)
                     if (!isRandom && targetShift != selection.CurrentShift)
@@ -884,7 +884,8 @@ namespace AethermancerHarness
                     {
                         Plugin.Log.LogInfo($"AutoProgressDialogue: Found 'Event' option at index {eventIndex}, auto-selecting");
                         SelectDialogueOptionInternal(eventIndex);
-                        System.Threading.Thread.Sleep(300);
+                        int eventDelay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 300;
+                        System.Threading.Thread.Sleep(eventDelay);
                         continue;
                     }
                 }
@@ -895,10 +896,21 @@ namespace AethermancerHarness
                     return;
                 }
 
+                // Handle single-option dialogues (like care chests) - auto-select the only option
+                if (data.DialogueOptions != null && data.DialogueOptions.Length == 1)
+                {
+                    Plugin.Log.LogInfo($"AutoProgressDialogue: Single option '{data.DialogueOptions[0]}', auto-selecting");
+                    SelectDialogueOptionInternal(0);
+                    int singleOptionDelay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 300;
+                    System.Threading.Thread.Sleep(singleOptionDelay);
+                    continue;
+                }
+
                 Plugin.Log.LogInfo($"AutoProgressDialogue: Auto-advancing past '{data.DialogueText?.Substring(0, Math.Min(50, data.DialogueText?.Length ?? 0))}...'");
                 Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
 
-                System.Threading.Thread.Sleep(150);
+                int delay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 150;
+                System.Threading.Thread.Sleep(delay);
             }
 
             Plugin.Log.LogWarning("AutoProgressDialogue: Timeout");

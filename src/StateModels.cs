@@ -256,6 +256,7 @@ namespace AethermancerHarness
         public bool? HasEvent { get; set; }
         public bool? Completed { get; set; }
         public bool? Found { get; set; }
+        public string PortalType { get; set; }
     }
 
     public class MonsterGroupInfo
