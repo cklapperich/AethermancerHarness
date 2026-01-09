@@ -375,54 +375,59 @@ namespace AethermancerHarness
         // UNIFIED CHOICE HANDLER
         // =====================================================
 
-        public static string ExecuteChoice(int choiceIndex, string shift = null)
+        public static string ExecuteChoice(string choiceName, string shift = null)
         {
+            // Resolve choice name to index based on current context
+            var (choiceIndex, error) = ResolveChoiceName(choiceName);
+            if (error != null)
+                return JsonConfig.Error(error);
+
             // Check skill selection
             if (StateSerializer.IsInSkillSelection())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to skill selection handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to skill selection handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteSkillSelectionChoice(choiceIndex);
             }
 
             // Check equipment selection first (after picking equipment from dialogue/loot)
             if (StateSerializer.IsInEquipmentSelection())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to equipment selection handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to equipment selection handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteEquipmentChoice(choiceIndex);
             }
 
             // Check merchant menu
             if (IsMerchantMenuOpen())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to merchant handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to merchant handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteMerchantChoice(choiceIndex);
             }
 
             // Check difficulty selection (run start)
             if (StateSerializer.IsInDifficultySelection())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to difficulty selection handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to difficulty selection handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteDifficultyChoice(choiceIndex);
             }
 
             // Check monster selection (shrine/starter)
             if (StateSerializer.IsInMonsterSelection())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to monster selection handler (index {choiceIndex}, shift: {shift ?? "default"})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to monster selection handler ('{choiceName}' -> index {choiceIndex}, shift: {shift ?? "default"})");
                 return ExecuteMonsterSelectionChoice(choiceIndex, shift);
             }
 
             // Check aether spring menu
             if (StateSerializer.IsInAetherSpringMenu())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to aether spring handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to aether spring handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteAetherSpringChoice(choiceIndex);
             }
 
             // Check dialogue
             if (IsDialogueOpen())
             {
-                Plugin.Log.LogInfo($"ExecuteChoice: Routing to dialogue choice handler (index {choiceIndex})");
+                Plugin.Log.LogInfo($"ExecuteChoice: Routing to dialogue choice handler ('{choiceName}' -> index {choiceIndex})");
                 return ExecuteDialogueChoice(choiceIndex);
             }
 

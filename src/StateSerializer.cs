@@ -73,11 +73,92 @@ namespace AethermancerHarness
 
     public static class StateSerializer
     {
-        private static string StripMarkup(string text)
+        public static string StripMarkup(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
             var result = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "");
             return result.Replace("\n", " ").Replace("[", "").Replace("]", "").Trim();
+        }
+
+        /// <summary>
+        /// Applies numbered suffixes to duplicate names in a list.
+        /// Returns a dictionary mapping original index to display name.
+        /// </summary>
+        public static Dictionary<int, string> DeduplicateNames(List<string> names)
+        {
+            var result = new Dictionary<int, string>();
+            var counts = new Dictionary<string, int>();
+            var seen = new Dictionary<string, int>();
+
+            // First pass: count occurrences
+            foreach (var name in names)
+            {
+                if (!string.IsNullOrEmpty(name))
+                    counts[name] = counts.GetValueOrDefault(name) + 1;
+            }
+
+            // Second pass: assign display names
+            for (int i = 0; i < names.Count; i++)
+            {
+                var name = names[i];
+                if (string.IsNullOrEmpty(name))
+                {
+                    result[i] = name;
+                    continue;
+                }
+
+                seen[name] = seen.GetValueOrDefault(name) + 1;
+                result[i] = counts[name] > 1 ? $"{name} {seen[name]}" : name;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Resolves a name to an index from a list of display names.
+        /// Returns (index, error) where error is null on success.
+        /// </summary>
+        public static (int index, string error) ResolveNameToIndex(string name, Dictionary<int, string> displayNames, string itemType = "item")
+        {
+            if (string.IsNullOrEmpty(name))
+                return (-1, $"{itemType} name is required");
+
+            foreach (var kvp in displayNames)
+            {
+                if (kvp.Value.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return (kvp.Key, null);
+            }
+
+            return (-1, $"No {itemType} named '{name}'");
+        }
+
+        /// <summary>
+        /// Helper to get deduplicated names for combat monsters (allies or enemies).
+        /// </summary>
+        public static Dictionary<int, string> GetCombatMonsterNames(List<Monster> monsters, bool onlyAlive = false)
+        {
+            var names = new List<string>();
+            var validIndices = new List<int>();
+
+            for (int i = 0; i < monsters.Count; i++)
+            {
+                if (onlyAlive && (monsters[i].State?.IsDead ?? false))
+                    continue;
+
+                names.Add(StripMarkup(monsters[i].Name));
+                validIndices.Add(i);
+            }
+
+            var deduplicated = DeduplicateNames(names);
+
+            // Remap to original indices
+            var result = new Dictionary<int, string>();
+            for (int i = 0; i < validIndices.Count; i++)
+            {
+                result[validIndices[i]] = deduplicated[i];
+            }
+
+            return result;
         }
 
         public static string ToJson()
@@ -231,6 +312,14 @@ namespace AethermancerHarness
                 });
             }
 
+            // Collect monster names for deduplication
+            var monsterNames = new List<string>();
+            for (int i = 0; i < displayedMonsters.Count; i++)
+                monsterNames.Add(displayedMonsters[i].Name ?? "Unknown");
+
+            var monsterDisplayNames = DeduplicateNames(monsterNames);
+
+            // Build choices with deduplicated names
             var choices = new List<MonsterChoice>();
             int outputIndex = 0;
             int monsterIndex = 0;
@@ -256,7 +345,7 @@ namespace AethermancerHarness
                     {
                         Index = outputIndex,
                         Type = ChoiceType.Monster,
-                        Name = monster.Name ?? "Unknown",
+                        Name = monsterDisplayNames[monsterIndex],
                         HasShiftedVariant = hasShiftedVariant,
                         Details = BuildMonsterDetails(monster, outputIndex)
                     });
@@ -359,16 +448,24 @@ namespace AethermancerHarness
                 });
             }
 
-            var choices = new List<MerchantItem>();
             var stockedItems = merchant.StockedItems;
 
+            // Collect item names for deduplication
+            var itemNames = new List<string>();
+            for (int i = 0; i < stockedItems.Count; i++)
+                itemNames.Add(stockedItems[i].GetName());
+
+            var itemDisplayNames = DeduplicateNames(itemNames);
+
+            // Build choices with deduplicated names
+            var choices = new List<MerchantItem>();
             for (int i = 0; i < stockedItems.Count; i++)
             {
                 var item = stockedItems[i];
                 choices.Add(new MerchantItem
                 {
                     Index = i,
-                    Name = item.GetName(),
+                    Name = itemDisplayNames[i],
                     Type = item.ItemType.ToString().ToLower(),
                     Rarity = item.ItemRarity.ToString(),
                     Price = item.Price,
@@ -771,21 +868,43 @@ namespace AethermancerHarness
             {
                 case ETargetType.SingleEnemy:
                 case ETargetType.AllEnemies:
+                    // Collect enemy names for deduplication
+                    var enemyNames = new List<string>();
+                    for (int i = 0; i < cc.Enemies.Count; i++)
+                        if (!cc.Enemies[i].State.IsDead)
+                            enemyNames.Add(StripMarkup(cc.Enemies[i].Name));
+
+                    var enemyDisplayNames = DeduplicateNames(enemyNames);
+                    int enemyIdx = 0;
                     for (int i = 0; i < cc.Enemies.Count; i++)
                     {
                         var e = cc.Enemies[i];
                         if (!e.State.IsDead)
-                            targets.Add(new TargetInfo { Index = i, Name = StripMarkup(e.Name) });
+                        {
+                            targets.Add(new TargetInfo { Index = i, Name = enemyDisplayNames[enemyIdx] });
+                            enemyIdx++;
+                        }
                     }
                     break;
 
                 case ETargetType.SingleAlly:
                 case ETargetType.AllAllies:
+                    // Collect ally names for deduplication
+                    var allyNames = new List<string>();
+                    for (int i = 0; i < cc.PlayerMonsters.Count; i++)
+                        if (!cc.PlayerMonsters[i].State.IsDead)
+                            allyNames.Add(StripMarkup(cc.PlayerMonsters[i].Name));
+
+                    var allyDisplayNames = DeduplicateNames(allyNames);
+                    int allyIdx = 0;
                     for (int i = 0; i < cc.PlayerMonsters.Count; i++)
                     {
                         var m = cc.PlayerMonsters[i];
                         if (!m.State.IsDead)
-                            targets.Add(new TargetInfo { Index = i, Name = StripMarkup(m.Name) });
+                        {
+                            targets.Add(new TargetInfo { Index = i, Name = allyDisplayNames[allyIdx] });
+                            allyIdx++;
+                        }
                     }
                     break;
 
@@ -803,13 +922,27 @@ namespace AethermancerHarness
             var current = cc.CurrentMonster;
             var currentIdx = current != null ? (current.BelongsToPlayer ? cc.PlayerMonsters.IndexOf(current) : -1) : -1;
 
+            // Collect base names for deduplication
+            var allyNames = new List<string>();
+            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
+                allyNames.Add(StripMarkup(cc.PlayerMonsters[i].Name));
+
+            var enemyNames = new List<string>();
+            for (int i = 0; i < cc.Enemies.Count; i++)
+                enemyNames.Add(StripMarkup(cc.Enemies[i].Name));
+
+            // Deduplicate names
+            var allyDisplayNames = DeduplicateNames(allyNames);
+            var enemyDisplayNames = DeduplicateNames(enemyNames);
+
+            // Build ally/enemy lists with deduplicated names
             var allies = new List<CombatMonster>();
             for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                allies.Add(BuildCombatMonster(cc.PlayerMonsters[i], i, true));
+                allies.Add(BuildCombatMonster(cc.PlayerMonsters[i], i, true, allyDisplayNames[i]));
 
             var enemies = new List<CombatMonster>();
             for (int i = 0; i < cc.Enemies.Count; i++)
-                enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false));
+                enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false, enemyDisplayNames[i]));
 
             return JsonConfig.Serialize(new CombatState
             {
@@ -971,12 +1104,12 @@ namespace AethermancerHarness
             return list;
         }
 
-        private static CombatMonster BuildCombatMonster(Monster m, int index, bool isPlayer)
+        private static CombatMonster BuildCombatMonster(Monster m, int index, bool isPlayer, string displayName = null)
         {
             var monster = new CombatMonster
             {
                 Index = index,
-                Name = StripMarkup(m.Name),
+                Name = displayName ?? StripMarkup(m.Name),
                 Hp = m.CurrentHealth,
                 MaxHp = m.Stats?.MaxHealth?.ValueInt ?? 0,
                 Shield = m.Shield,

@@ -94,10 +94,8 @@ namespace AethermancerHarness
 
         private static (int index, string error) ResolveActorByName(string name, CombatController cc)
         {
-            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                if (cc.PlayerMonsters[i].Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-                    return (i, null);
-            return (-1, $"No allied monster named '{name}'");
+            var displayNames = StateSerializer.GetCombatMonsterNames(cc.PlayerMonsters);
+            return StateSerializer.ResolveNameToIndex(name, displayNames, "ally");
         }
 
         private static (int index, string error) ResolveSkillByName(string name, Monster actor)
@@ -106,6 +104,28 @@ namespace AethermancerHarness
                 if (actor.SkillManager.Actions[i].Action.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
                     return (i, null);
             return (-1, $"No skill named '{name}' for {actor.Name}");
+        }
+
+        private static (int index, string error) ResolveTargetByName(string name, ETargetType targetType, CombatController cc)
+        {
+            switch (targetType)
+            {
+                case ETargetType.SingleEnemy:
+                case ETargetType.AllEnemies:
+                    var enemyNames = StateSerializer.GetCombatMonsterNames(cc.Enemies, onlyAlive: true);
+                    return StateSerializer.ResolveNameToIndex(name, enemyNames, "enemy");
+
+                case ETargetType.SingleAlly:
+                case ETargetType.AllAllies:
+                    var allyNames = StateSerializer.GetCombatMonsterNames(cc.PlayerMonsters, onlyAlive: true);
+                    return StateSerializer.ResolveNameToIndex(name, allyNames, "ally");
+
+                case ETargetType.SelfOrOwner:
+                    return (-1, null);
+
+                default:
+                    return (-1, $"Cannot resolve target name for target type {targetType}");
+            }
         }
 
         // =====================================================
@@ -148,19 +168,14 @@ namespace AethermancerHarness
         // COMBAT ACTION EXECUTION
         // =====================================================
 
-        public static string ExecuteCombatAction(int actorIndex, int skillIndex, int targetIndex)
-        {
-            return ExecuteCombatAction(actorIndex, null, skillIndex, null, targetIndex);
-        }
-
-        public static string ExecuteCombatAction(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
+        public static string ExecuteCombatAction(string actorName, string skillName, string targetName)
         {
             // This method can be called from HTTP thread - it handles its own threading
 
             string error = null;
             string actionName = null;
             string resolvedActorName = null;
-            string targetName = null;
+            string resolvedTargetName = null;
             CombatStateSnapshot snapshot = null;
 
             // Phase 1: Validate and start action (main thread)
@@ -174,57 +189,25 @@ namespace AethermancerHarness
 
                 var cc = CombatController.Instance;
 
-                // Resolve actor: name takes precedence if index is -1
-                int resolvedActorIndex = actorIndex;
-                if (!string.IsNullOrEmpty(actorName))
+                // Resolve actor by name
+                var (actorIndex, actorError) = ResolveActorByName(actorName, cc);
+                if (actorError != null)
                 {
-                    if (actorIndex >= 0)
-                    {
-                        error = JsonConfig.Error("Cannot specify both actorIndex and actorName");
-                        return;
-                    }
-                    var (idx, err) = ResolveActorByName(actorName, cc);
-                    if (err != null)
-                    {
-                        error = JsonConfig.Error(err);
-                        return;
-                    }
-                    resolvedActorIndex = idx;
-                }
-
-                if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
-                {
-                    error = JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
+                    error = JsonConfig.Error(actorError);
                     return;
                 }
 
-                var actor = cc.PlayerMonsters[resolvedActorIndex];
+                var actor = cc.PlayerMonsters[actorIndex];
 
-                // Resolve skill: name takes precedence if index is -1
-                int resolvedSkillIndex = skillIndex;
-                if (!string.IsNullOrEmpty(skillName))
+                // Resolve skill by name
+                var (skillIndex, skillError) = ResolveSkillByName(skillName, actor);
+                if (skillError != null)
                 {
-                    if (skillIndex >= 0)
-                    {
-                        error = JsonConfig.Error("Cannot specify both skillIndex and skillName");
-                        return;
-                    }
-                    var (idx, err) = ResolveSkillByName(skillName, actor);
-                    if (err != null)
-                    {
-                        error = JsonConfig.Error(err);
-                        return;
-                    }
-                    resolvedSkillIndex = idx;
-                }
-
-                if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
-                {
-                    error = JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
+                    error = JsonConfig.Error(skillError);
                     return;
                 }
 
-                var skill = actor.SkillManager.Actions[resolvedSkillIndex];
+                var skill = actor.SkillManager.Actions[skillIndex];
 
                 if (!skill.Action.CanUseAction(skill))
                 {
@@ -232,20 +215,28 @@ namespace AethermancerHarness
                     return;
                 }
 
-                var (target, targetError) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
-                if (target == null)
+                // Resolve target by name
+                var (targetIndex, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc);
+                if (targetError != null)
                 {
                     error = JsonConfig.Error(targetError);
+                    return;
+                }
+
+                var (target, resolveError) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
+                if (target == null)
+                {
+                    error = JsonConfig.Error(resolveError);
                     return;
                 }
 
                 // Capture info needed for later phases
                 actionName = skill.Action.Name;
                 resolvedActorName = actor.Name;
-                targetName = GetTargetName(target);
+                resolvedTargetName = GetTargetName(target);
                 snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
 
-                Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {targetName}");
+                Plugin.Log.LogInfo($"Executing action: {actor.Name} uses {skill.Action.Name} on {resolvedTargetName}");
                 actor.State.StartAction(skill, target, target);
             });
 
@@ -267,7 +258,7 @@ namespace AethermancerHarness
                 if (!combatWon)
                 {
                     // Combat not won - build response immediately
-                    result = BuildCombatActionResponse(actionName, resolvedActorName, targetName, ready, false, snapshot);
+                    result = BuildCombatActionResponse(actionName, resolvedActorName, resolvedTargetName, ready, false, snapshot);
                 }
             });
 
@@ -424,54 +415,34 @@ namespace AethermancerHarness
         // PREVIEW SYSTEM
         // =====================================================
 
-        public static string ExecutePreview(int actorIndex, int skillIndex, int targetIndex)
-        {
-            return ExecutePreview(actorIndex, null, skillIndex, null, targetIndex);
-        }
-
-        public static string ExecutePreview(int actorIndex, string actorName, int skillIndex, string skillName, int targetIndex)
+        public static string ExecutePreview(string actorName, string skillName, string targetName)
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
                 return JsonConfig.Error("Not in combat");
 
             var cc = CombatController.Instance;
 
-            // Resolve actor: name takes precedence if index is -1
-            int resolvedActorIndex = actorIndex;
-            if (!string.IsNullOrEmpty(actorName))
-            {
-                if (actorIndex >= 0)
-                    return JsonConfig.Error("Cannot specify both actorIndex and actorName");
-                var (idx, err) = ResolveActorByName(actorName, cc);
-                if (err != null)
-                    return JsonConfig.Error(err);
-                resolvedActorIndex = idx;
-            }
+            // Resolve actor by name
+            var (actorIndex, actorError) = ResolveActorByName(actorName, cc);
+            if (actorError != null)
+                return JsonConfig.Error(actorError);
 
-            if (resolvedActorIndex < 0 || resolvedActorIndex >= cc.PlayerMonsters.Count)
-                return JsonConfig.Error($"Invalid actor index: {resolvedActorIndex}");
+            var actor = cc.PlayerMonsters[actorIndex];
 
-            var actor = cc.PlayerMonsters[resolvedActorIndex];
+            // Resolve skill by name
+            var (skillIndex, skillError) = ResolveSkillByName(skillName, actor);
+            if (skillError != null)
+                return JsonConfig.Error(skillError);
 
-            // Resolve skill: name takes precedence if index is -1
-            int resolvedSkillIndex = skillIndex;
-            if (!string.IsNullOrEmpty(skillName))
-            {
-                if (skillIndex >= 0)
-                    return JsonConfig.Error("Cannot specify both skillIndex and skillName");
-                var (idx, err) = ResolveSkillByName(skillName, actor);
-                if (err != null)
-                    return JsonConfig.Error(err);
-                resolvedSkillIndex = idx;
-            }
-
-            if (resolvedSkillIndex < 0 || resolvedSkillIndex >= actor.SkillManager.Actions.Count)
-                return JsonConfig.Error($"Invalid skill index: {resolvedSkillIndex}");
-
-            var skill = actor.SkillManager.Actions[resolvedSkillIndex];
+            var skill = actor.SkillManager.Actions[skillIndex];
 
             if (!skill.Action.CanUseAction(skill))
                 return JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
+
+            // Resolve target by name
+            var (targetIndex, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc);
+            if (targetError != null)
+                return JsonConfig.Error(targetError);
 
             var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
             if (target == null)

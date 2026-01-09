@@ -140,5 +140,129 @@ namespace AethermancerHarness
                 Plugin.Log.LogInfo("TriggerContinue: Called Continue()");
             }
         }
+
+        /// <summary>
+        /// Resolves a choice name to an index by parsing the current game state.
+        /// Returns (index, error) where error is null on success.
+        /// </summary>
+        public static (int index, string error) ResolveChoiceName(string choiceName)
+        {
+            if (string.IsNullOrEmpty(choiceName))
+                return (-1, "choiceName is required");
+
+            // Skill selection
+            if (StateSerializer.IsInSkillSelection())
+            {
+                var stateJson = StateSerializer.GetSkillSelectionStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<SkillSelectionState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No skill named '{choiceName}'");
+            }
+
+            // Equipment selection
+            if (StateSerializer.IsInEquipmentSelection())
+            {
+                var stateJson = StateSerializer.GetEquipmentSelectionStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<EquipmentSelectionState>(stateJson);
+
+                // Check for "Scrap" special name
+                if (choiceName.Equals("Scrap", StringComparison.OrdinalIgnoreCase) ||
+                    choiceName.Equals("Scrap Equipment", StringComparison.OrdinalIgnoreCase))
+                {
+                    return (state.Choices.Count - 1, null);
+                }
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No equipment choice named '{choiceName}'");
+            }
+
+            // Merchant menu
+            if (IsMerchantMenuOpen())
+            {
+                var stateJson = StateSerializer.GetMerchantStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<MerchantState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No merchant item named '{choiceName}'");
+            }
+
+            // Difficulty selection
+            if (StateSerializer.IsInDifficultySelection())
+            {
+                var stateJson = StateSerializer.GetDifficultySelectionStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<DifficultySelectionState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No difficulty named '{choiceName}'");
+            }
+
+            // Monster selection
+            if (StateSerializer.IsInMonsterSelection())
+            {
+                var stateJson = StateSerializer.GetMonsterSelectionStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<MonsterSelectionState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No monster named '{choiceName}'");
+            }
+
+            // Aether spring
+            if (StateSerializer.IsInAetherSpringMenu())
+            {
+                var stateJson = StateSerializer.GetAetherSpringStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<AetherSpringState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Name != null &&
+                        state.Choices[i].Name.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No boon named '{choiceName}'");
+            }
+
+            // Dialogue
+            if (IsDialogueOpen())
+            {
+                var stateJson = StateSerializer.GetDialogueStateJson();
+                var state = Newtonsoft.Json.JsonConvert.DeserializeObject<DialogueState>(stateJson);
+
+                for (int i = 0; i < state.Choices.Count; i++)
+                {
+                    if (state.Choices[i].Text != null &&
+                        state.Choices[i].Text.Equals(choiceName, StringComparison.OrdinalIgnoreCase))
+                        return (i, null);
+                }
+                return (-1, $"No dialogue choice named '{choiceName}'");
+            }
+
+            return (-1, "No active choice context");
+        }
     }
 }

@@ -285,44 +285,54 @@ namespace AethermancerHarness
         {
             var json = JsonConfig.Parse(body);
             var consumableIndex = JsonConfig.Value(json, "consumableIndex", -1);
-            var skillIndex = JsonConfig.Value(json, "skillIndex", -1);
-            var skillName = JsonConfig.Value(json, "skillName", (string)null);
 
-            if (consumableIndex >= 0 && (skillIndex >= 0 || !string.IsNullOrEmpty(skillName)))
-                return JsonConfig.Error("Cannot specify both consumableIndex and skill (skillIndex/skillName)");
-
+            // Consumables still use index (they're inventory items, not named game entities)
             if (consumableIndex >= 0)
             {
                 var targetIndex = JsonConfig.Value(json, "targetIndex", -1);
                 return ActionHandler.ExecuteConsumableAction(consumableIndex, targetIndex);
             }
 
-            var actorIndex = JsonConfig.Value(json, "actorIndex", -1);
+            // Combat actions now use names only
             var actorName = JsonConfig.Value(json, "actorName", (string)null);
-            var targetIndex2 = JsonConfig.Value(json, "targetIndex", -1);
-            return ActionHandler.ExecuteCombatAction(actorIndex, actorName, skillIndex, skillName, targetIndex2);
+            var skillName = JsonConfig.Value(json, "skillName", (string)null);
+            var targetName = JsonConfig.Value(json, "targetName", (string)null);
+
+            if (string.IsNullOrEmpty(actorName))
+                return JsonConfig.Error("actorName is required");
+            if (string.IsNullOrEmpty(skillName))
+                return JsonConfig.Error("skillName is required");
+            if (string.IsNullOrEmpty(targetName))
+                return JsonConfig.Error("targetName is required");
+
+            return ActionHandler.ExecuteCombatAction(actorName, skillName, targetName);
         }
 
         private string HandleCombatPreview(string body)
         {
             var json = JsonConfig.Parse(body);
             var consumableIndex = JsonConfig.Value(json, "consumableIndex", -1);
-            var skillIndex = JsonConfig.Value(json, "skillIndex", -1);
-            var skillName = JsonConfig.Value(json, "skillName", (string)null);
 
-            if (consumableIndex >= 0 && (skillIndex >= 0 || !string.IsNullOrEmpty(skillName)))
-                return JsonConfig.Error("Cannot specify both consumableIndex and skill (skillIndex/skillName)");
-
+            // Consumables still use index
             if (consumableIndex >= 0)
             {
                 var targetIndex = JsonConfig.Value(json, "targetIndex", -1);
                 return ActionHandler.ExecuteConsumablePreview(consumableIndex, targetIndex);
             }
 
-            var actorIndex = JsonConfig.Value(json, "actorIndex", -1);
+            // Combat previews now use names only
             var actorName = JsonConfig.Value(json, "actorName", (string)null);
-            var targetIndex2 = JsonConfig.Value(json, "targetIndex", -1);
-            return ActionHandler.ExecutePreview(actorIndex, actorName, skillIndex, skillName, targetIndex2);
+            var skillName = JsonConfig.Value(json, "skillName", (string)null);
+            var targetName = JsonConfig.Value(json, "targetName", (string)null);
+
+            if (string.IsNullOrEmpty(actorName))
+                return JsonConfig.Error("actorName is required");
+            if (string.IsNullOrEmpty(skillName))
+                return JsonConfig.Error("skillName is required");
+            if (string.IsNullOrEmpty(targetName))
+                return JsonConfig.Error("targetName is required");
+
+            return ActionHandler.ExecutePreview(actorName, skillName, targetName);
         }
 
         private string HandleTeleport(string body)
@@ -378,13 +388,13 @@ namespace AethermancerHarness
         private string HandleChoice(string body)
         {
             var json = JsonConfig.Parse(body);
-            var choiceIndex = JsonConfig.Value(json, "choiceIndex", -1);
+            var choiceName = JsonConfig.Value(json, "choiceName", (string)null);
             var shift = JsonConfig.Value(json, "shift", (string)null); // "normal" or "shifted"
 
-            if (choiceIndex < 0)
-                return JsonConfig.Error("choiceIndex is required and must be >= 0");
+            if (string.IsNullOrEmpty(choiceName))
+                return JsonConfig.Error("choiceName is required");
 
-            return ActionHandler.ExecuteChoice(choiceIndex, shift);
+            return ActionHandler.ExecuteChoice(choiceName, shift);
         }
     }
 }

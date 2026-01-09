@@ -2,6 +2,13 @@
 
 HTTP API for automating and controlling the Aethermancer game.
 
+## API Design
+
+This API uses names instead of numeric indices. Use the names you see in state responses for all combat actions and choices.
+
+- Case-insensitive matching
+- Names are unique (numbered when needed: `"Goblin 1"`, `"Goblin 2"`)
+
 ## Server Configuration
 
 | Setting | Value |
@@ -55,7 +62,7 @@ Get complete game state. Response structure varies by current game phase.
 
 **`GET /actions`**
 
-Get available actions in the current game state.
+Get available actions and targets for use in `/combat/action` requests.
 
 **Response:**
 ```json
@@ -65,7 +72,7 @@ Get available actions in the current game state.
       "skillIndex": 0,
       "name": "Strike",
       "cost": { "fire": 1, "water": 0, "earth": 0, "wind": 0, "wild": 0 },
-      "targets": [{ "index": 0, "name": "Goblin" }],
+      "targets": [{ "index": 0, "name": "Goblin 1" }, { "index": 1, "name": "Goblin 2" }],
       "category": "Attack",
       "subTypes": ["Physical"]
     }
@@ -83,29 +90,42 @@ Get available actions in the current game state.
 
 **`POST /combat/action`**
 
-Execute a combat action (skill or consumable).
+Execute a combat action using semantic names.
 
-**Request Body:**
+**Request Body (Skills):**
 ```json
 {
-  "actorIndex": 0,
-  "skillIndex": 0,
+  "actorName": "Wolpertinger",
+  "skillName": "Fireball",
+  "targetName": "Goblin 2"
+}
+```
+
+**Request Body (Consumables):**
+```json
+{
+  "consumableIndex": 0,
   "targetIndex": 0
 }
 ```
 
-**Alternative field names:**
-- `actorName` instead of `actorIndex`
-- `skillName` instead of `skillIndex`
-- `consumableIndex` for consumable items (cannot combine with skill fields)
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `actorName` | string | Yes* | Ally name from state |
+| `skillName` | string | Yes* | Skill name from state |
+| `targetName` | string | Yes* | Target name from state |
+| `consumableIndex` | int | No | Consumable inventory index |
+| `targetIndex` | int | No | Target index for consumables |
+
+*Required for skill actions. Use `consumableIndex` + `targetIndex` for consumables.
 
 **Response:**
 ```json
 {
   "success": true,
-  "action": "Strike",
-  "actor": "Phoenix",
-  "target": "Goblin",
+  "action": "Fireball",
+  "actor": "Wolpertinger",
+  "target": "Goblin 2",
   "waitedForReady": false,
   "condensed": true,
   "roundChanged": false,
@@ -122,7 +142,16 @@ Execute a combat action (skill or consumable).
 
 **`POST /combat/preview`**
 
-Preview action effects without executing. Same request format as `/combat/action`.
+Preview action effects without executing.
+
+**Request Body:** Same format as `/combat/action`
+```json
+{
+  "actorName": "Wolpertinger",
+  "skillName": "Fireball",
+  "targetName": "Goblin 2"
+}
+```
 
 **Response:**
 ```json
@@ -343,31 +372,29 @@ Break all destructibles and collect loot on the current map.
 
 **`POST /choice`**
 
-Handle choices across all contexts (dialogue, difficulty, monster selection, equipment, merchant, aether spring, skill selection).
+Handle choices across all contexts using semantic names (dialogue, difficulty, monster selection, equipment, merchant, aether spring, skill selection).
 
 **Request Body:**
 ```json
 {
-  "choiceIndex": 0,
+  "choiceName": "Fireball",
   "shift": "normal"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `choiceIndex` | int | Index of choice to select |
+| `choiceName` | string | Name of choice to select (case-insensitive) |
 | `shift` | string | `normal` or `shifted` (monster selection only) |
 
 The endpoint auto-routes based on current game phase.
 
-**Skill Selection Context:**
-- `choiceIndex` 0-2: Select skill at index
-- `choiceIndex` 3: Select max health bonus
-- `choiceIndex` -1: Reroll skills (if rerolls available)
-
-**Monster Selection Context:**
-- `choiceIndex` 0-N: Select monster at index
-- `choiceIndex` -1: Reroll monsters (if shrine rerolls available and in normal shrine)
+**Example names:**
+- Skills: `"Fireball"`, `"Max Health"`
+- Monsters: `"Wolpertinger"`, `"Random Monster"`
+- Merchant: `"Health Potion 2"`, `"Leave Shop"`
+- Dialogue: `"Tell me more"`
+- Equipment: `"Blazing Sword"`, `"Scrap Equipment"`
 
 ---
 
@@ -399,7 +426,7 @@ Select a dialogue option. (Alias for `/choice` in dialogue context)
 **Request Body:**
 ```json
 {
-  "choiceIndex": 0
+  "choiceName": "Show me your wares"
 }
 ```
 
@@ -413,9 +440,20 @@ Use `/exploration/interact` to automatically find and open the merchant shop.
 
 ### Purchase Item
 
-Use `/choice` endpoint when merchant is open:
-- `choiceIndex < stockedItems.Count`: Purchase item at index
-- `choiceIndex == stockedItems.Count`: Close shop
+Use `/choice` endpoint when merchant is open with the item name:
+
+```json
+{
+  "choiceName": "Health Potion 2"
+}
+```
+
+Or to close the shop:
+```json
+{
+  "choiceName": "Leave Shop"
+}
+```
 
 Equipment purchases transition to equipment selection phase.
 
@@ -429,8 +467,13 @@ Use `/exploration/interact` to automatically find and open the aether spring boo
 
 ### Select Boon
 
-Use `/choice` endpoint when aether spring is open:
-- `choiceIndex`: 0 for left boon, 1 for right boon
+Use `/choice` endpoint when aether spring is open with the boon name:
+
+```json
+{
+  "choiceName": "Fire Attunement"
+}
+```
 
 ---
 
@@ -746,9 +789,10 @@ Some endpoints include additional context:
 }
 ```
 
-Common error scenarios:
-- Invalid indices (skill, target, actor, choice)
-- Wrong game phase for the requested action
+Common errors:
+- Name not found
+- Wrong game phase
 - Game not ready for input
 - Missing required fields
-- Resource unavailable (no rerolls, insufficient scrap, etc.)
+- Insufficient resources
+- Skill cannot be used
