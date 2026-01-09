@@ -270,14 +270,14 @@ namespace AethermancerHarness
             return WaitForPostCombatComplete();
         }
 
-        public static string ExecuteConsumableAction(int consumableIndex, int targetIndex)
+        public static string ExecuteConsumableAction(string consumableName, string targetName)
         {
             // This method can be called from HTTP thread - it handles its own threading
 
             string error = null;
             string actionName = null;
             string actorName = null;
-            string targetName = null;
+            string resolvedTargetName = null;
             CombatStateSnapshot snapshot = null;
 
             // Phase 1: Validate and start action (main thread)
@@ -292,9 +292,23 @@ namespace AethermancerHarness
                 var cc = CombatController.Instance;
                 var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
-                if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
+                if (consumables == null)
                 {
-                    error = JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
+                    error = JsonConfig.Error("No consumables available");
+                    return;
+                }
+
+                // Build deduplicated consumable names
+                var consumableNames = new System.Collections.Generic.List<string>();
+                foreach (var c in consumables)
+                    consumableNames.Add(StateSerializer.StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
+
+                var displayNames = StateSerializer.DeduplicateNames(consumableNames);
+                var (consumableIndex, consumableError) = StateSerializer.ResolveNameToIndex(consumableName, displayNames, "consumable");
+
+                if (consumableIndex < 0)
+                {
+                    error = JsonConfig.Error(consumableError);
                     return;
                 }
 
@@ -315,20 +329,27 @@ namespace AethermancerHarness
                     return;
                 }
 
-                var (target, targetError) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
-                if (target == null)
+                var (targetIndex, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc);
+                if (targetError != null)
                 {
                     error = JsonConfig.Error(targetError);
+                    return;
+                }
+
+                var (target, resolveError) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
+                if (target == null)
+                {
+                    error = JsonConfig.Error(resolveError);
                     return;
                 }
 
                 // Capture info needed for later phases
                 actionName = consumable.Consumable?.Name ?? "";
                 actorName = currentMonster.Name;
-                targetName = GetTargetName(target);
+                resolvedTargetName = GetTargetName(target);
                 snapshot = UseCondensedState ? CombatStateSnapshot.Capture() : null;
 
-                Plugin.Log.LogInfo($"Using consumable: {actionName} on {targetName}");
+                Plugin.Log.LogInfo($"Using consumable: {actionName} on {resolvedTargetName}");
                 currentMonster.State.StartAction(consumable, target, target);
             });
 
@@ -350,7 +371,7 @@ namespace AethermancerHarness
                 if (!combatWon)
                 {
                     // Combat not won - build response immediately
-                    result = BuildCombatActionResponse(actionName, actorName, targetName, ready, true, snapshot);
+                    result = BuildCombatActionResponse(actionName, actorName, resolvedTargetName, ready, true, snapshot);
                 }
             });
 
@@ -452,7 +473,7 @@ namespace AethermancerHarness
             return ExecutePreviewInternal(cc, actor, skill, target);
         }
 
-        public static string ExecuteConsumablePreview(int consumableIndex, int targetIndex)
+        public static string ExecuteConsumablePreview(string consumableName, string targetName)
         {
             if (!(GameStateManager.Instance?.IsCombat ?? false))
                 return JsonConfig.Error("Not in combat");
@@ -460,8 +481,19 @@ namespace AethermancerHarness
             var cc = CombatController.Instance;
             var consumables = PlayerController.Instance?.Inventory?.GetAllConsumables();
 
-            if (consumables == null || consumableIndex < 0 || consumableIndex >= consumables.Count)
-                return JsonConfig.Error($"Invalid consumable index: {consumableIndex}");
+            if (consumables == null)
+                return JsonConfig.Error("No consumables available");
+
+            // Build deduplicated consumable names
+            var consumableNames = new System.Collections.Generic.List<string>();
+            foreach (var c in consumables)
+                consumableNames.Add(StateSerializer.StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
+
+            var displayNames = StateSerializer.DeduplicateNames(consumableNames);
+            var (consumableIndex, consumableError) = StateSerializer.ResolveNameToIndex(consumableName, displayNames, "consumable");
+
+            if (consumableIndex < 0)
+                return JsonConfig.Error(consumableError);
 
             var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
@@ -473,6 +505,10 @@ namespace AethermancerHarness
 
             if (!consumable.Action.CanUseAction(consumable))
                 return JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
+
+            var (targetIndex, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc);
+            if (targetError != null)
+                return JsonConfig.Error(targetError);
 
             var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
             if (target == null)

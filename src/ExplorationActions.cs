@@ -12,7 +12,7 @@ namespace AethermancerHarness
         // VOID BLITZ
         // =====================================================
 
-        public static string ExecuteVoidBlitz(int monsterGroupIndex, int monsterIndex = 0)
+        public static string ExecuteVoidBlitz(string monsterGroupName, string monsterName = null)
         {
             if (GameStateManager.Instance?.IsCombat ?? true)
                 return JsonConfig.Error("Cannot void blitz during combat");
@@ -24,8 +24,21 @@ namespace AethermancerHarness
             if (groups == null || groups.Count == 0)
                 return JsonConfig.Error("No monster groups available");
 
-            if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonConfig.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
+            // Build monster group names
+            var groupNames = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var group = groups[i];
+                if (group == null) continue;
+                var pos = group.transform.position;
+                groupNames.Add($"Monster Group at ({pos.x:F0}, {pos.y:F0})");
+            }
+
+            var groupDisplayNames = StateSerializer.DeduplicateNames(groupNames);
+            var (monsterGroupIndex, groupError) = StateSerializer.ResolveNameToIndex(monsterGroupName, groupDisplayNames, "monster group");
+
+            if (monsterGroupIndex < 0)
+                return JsonConfig.Error(groupError);
 
             var targetGroup = groups[monsterGroupIndex];
             if (targetGroup == null)
@@ -39,13 +52,34 @@ namespace AethermancerHarness
 
             // Find target monster
             OverworldMonster targetMonster = null;
-            if (monsterIndex >= 0 && monsterIndex < targetGroup.OverworldMonsters.Count)
+
+            // If monster name is provided, resolve it
+            if (!string.IsNullOrEmpty(monsterName))
             {
-                targetMonster = targetGroup.OverworldMonsters[monsterIndex];
-                if (targetMonster == null || !targetMonster.gameObject.activeSelf)
-                    targetMonster = null;
+                // Build monster names for this group
+                var monsterNames = new System.Collections.Generic.List<string>();
+                foreach (var m in targetGroup.OverworldMonsters)
+                {
+                    if (m != null && m.gameObject.activeSelf)
+                        monsterNames.Add(m.name);
+                }
+
+                var monsterDisplayNames = StateSerializer.DeduplicateNames(monsterNames);
+                var (monsterIndex, monsterError) = StateSerializer.ResolveNameToIndex(monsterName, monsterDisplayNames, "monster");
+
+                if (monsterIndex >= 0 && monsterIndex < targetGroup.OverworldMonsters.Count)
+                {
+                    targetMonster = targetGroup.OverworldMonsters[monsterIndex];
+                    if (targetMonster == null || !targetMonster.gameObject.activeSelf)
+                        return JsonConfig.Error("Specified monster is not active");
+                }
+                else
+                {
+                    return JsonConfig.Error(monsterError);
+                }
             }
 
+            // If no monster name provided or not found, use first active monster
             if (targetMonster == null)
             {
                 foreach (var monster in targetGroup.OverworldMonsters)
@@ -83,7 +117,7 @@ namespace AethermancerHarness
             {
                 success = true,
                 action = "void_blitz",
-                monsterGroupIndex,
+                monsterGroup = monsterGroupName,
                 targetMonster = targetMonsterName,
                 note = "Animation playing, combat will start shortly"
             });
@@ -93,7 +127,7 @@ namespace AethermancerHarness
         // START COMBAT (WITHOUT VOID BLITZ)
         // =====================================================
 
-        public static string ExecuteStartCombat(int monsterGroupIndex)
+        public static string ExecuteStartCombat(string monsterGroupName)
         {
             if (GameStateManager.Instance?.IsCombat ?? true)
                 return JsonConfig.Error("Already in combat");
@@ -102,8 +136,21 @@ namespace AethermancerHarness
             if (groups == null || groups.Count == 0)
                 return JsonConfig.Error("No monster groups available");
 
-            if (monsterGroupIndex < 0 || monsterGroupIndex >= groups.Count)
-                return JsonConfig.Error($"Invalid monster group index: {monsterGroupIndex}. Valid range: 0-{groups.Count - 1}");
+            // Build monster group names
+            var groupNames = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var group = groups[i];
+                if (group == null) continue;
+                var pos = group.transform.position;
+                groupNames.Add($"Monster Group at ({pos.x:F0}, {pos.y:F0})");
+            }
+
+            var groupDisplayNames = StateSerializer.DeduplicateNames(groupNames);
+            var (monsterGroupIndex, groupError) = StateSerializer.ResolveNameToIndex(monsterGroupName, groupDisplayNames, "monster group");
+
+            if (monsterGroupIndex < 0)
+                return JsonConfig.Error(groupError);
 
             var targetGroup = groups[monsterGroupIndex];
             if (targetGroup == null)
@@ -112,10 +159,10 @@ namespace AethermancerHarness
             if (targetGroup.EncounterDefeated)
                 return JsonConfig.Error("Monster group already defeated");
 
-            Plugin.Log.LogInfo($"ExecuteStartCombat: Starting combat with group {monsterGroupIndex}");
+            Plugin.Log.LogInfo($"ExecuteStartCombat: Starting combat with group {monsterGroupName}");
             targetGroup.StartCombat(aetherBlitzed: false, null, ignoreGameState: true);
 
-            return JsonConfig.Serialize(new { success = true, action = "start_combat", monsterGroupIndex });
+            return JsonConfig.Serialize(new { success = true, action = "start_combat", monsterGroup = monsterGroupName });
         }
 
         // =====================================================
@@ -325,7 +372,7 @@ namespace AethermancerHarness
         // TYPED INTERACT (with type and index)
         // =====================================================
 
-        public static string ExecuteInteract(string type, int index)
+        public static string ExecuteInteract(string type, string name)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
                 return JsonConfig.Error("Cannot interact during combat");
@@ -338,15 +385,46 @@ namespace AethermancerHarness
                     return JsonConfig.Error("PropGenerator not available");
 
                 var exitInteractables = propGen.ExitInteractables;
-                if (exitInteractables == null || index < 0 || index >= exitInteractables.Count)
-                    return JsonConfig.Error($"Invalid portal index: {index}");
+                if (exitInteractables == null || exitInteractables.Count == 0)
+                    return JsonConfig.Error("No portals available");
+
+                // Build portal names
+                var portalNames = new System.Collections.Generic.List<string>();
+                var nextMapBubbleField = typeof(ExitInteractable).GetField(
+                    "nextMapBubble",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                for (int i = 0; i < exitInteractables.Count; i++)
+                {
+                    var go = exitInteractables[i];
+                    if (go == null) continue;
+
+                    var exitInteractable = go.GetComponent<ExitInteractable>();
+                    if (exitInteractable == null) continue;
+
+                    string portalType = "None";
+                    if (nextMapBubbleField != null)
+                    {
+                        var mapBubble = nextMapBubbleField.GetValue(exitInteractable) as MapBubble;
+                        if (mapBubble != null)
+                            portalType = mapBubble.Customization.ToString();
+                    }
+
+                    portalNames.Add($"Portal ({portalType})");
+                }
+
+                var portalDisplayNames = StateSerializer.DeduplicateNames(portalNames);
+                var (index, portalError) = StateSerializer.ResolveNameToIndex(name, portalDisplayNames, "portal");
+
+                if (index < 0)
+                    return JsonConfig.Error(portalError);
 
                 var portalGO = exitInteractables[index];
                 if (portalGO == null)
                     return JsonConfig.Error("Portal is null");
 
-                var exitInteractable = portalGO.GetComponent<ExitInteractable>();
-                if (exitInteractable == null)
+                var portalComponent = portalGO.GetComponent<ExitInteractable>();
+                if (portalComponent == null)
                     return JsonConfig.Error("Portal component not found");
 
                 Plugin.RunOnMainThreadAndWait(() =>
@@ -354,10 +432,10 @@ namespace AethermancerHarness
                     // Teleport to portal and interact
                     var portalPos = portalGO.transform.position;
                     PlayerMovementController.Instance.transform.position = portalPos;
-                    exitInteractable.StartBaseInteraction();
+                    portalComponent.StartBaseInteraction();
                 });
 
-                return JsonConfig.Serialize(new { success = true, action = "portal_enter" });
+                return JsonConfig.Serialize(new { success = true, action = "portal_enter", portal = name });
             }
 
             return JsonConfig.Error($"Unknown interactable type: {type}");

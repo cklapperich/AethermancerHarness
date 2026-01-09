@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace AethermancerHarness
@@ -94,7 +95,7 @@ namespace AethermancerHarness
             foreach (var name in names)
             {
                 if (!string.IsNullOrEmpty(name))
-                    counts[name] = counts.GetValueOrDefault(name) + 1;
+                    counts[name] = counts.ContainsKey(name) ? counts[name] + 1 : 1;
             }
 
             // Second pass: assign display names
@@ -107,7 +108,7 @@ namespace AethermancerHarness
                     continue;
                 }
 
-                seen[name] = seen.GetValueOrDefault(name) + 1;
+                seen[name] = seen.ContainsKey(name) ? seen[name] + 1 : 1;
                 result[i] = counts[name] > 1 ? $"{name} {seen[name]}" : name;
             }
 
@@ -249,9 +250,9 @@ namespace AethermancerHarness
                 MaxUnlockedDifficulty = maxUnlocked,
                 Choices = new List<DifficultyChoice>
                 {
-                    new DifficultyChoice { Index = 0, Name = "Normal", Difficulty = "Normal", Unlocked = maxUnlocked >= 1, Selected = currentDifficulty == EDifficulty.Normal },
-                    new DifficultyChoice { Index = 1, Name = "Heroic", Difficulty = "Heroic", Unlocked = maxUnlocked >= 2, Selected = currentDifficulty == EDifficulty.Heroic },
-                    new DifficultyChoice { Index = 2, Name = "Mythic", Difficulty = "Mythic", Unlocked = maxUnlocked >= 3, Selected = currentDifficulty == EDifficulty.Mythic }
+                    new DifficultyChoice { Name = "Normal", Difficulty = "Normal", Unlocked = maxUnlocked >= 1, Selected = currentDifficulty == EDifficulty.Normal },
+                    new DifficultyChoice { Name = "Heroic", Difficulty = "Heroic", Unlocked = maxUnlocked >= 2, Selected = currentDifficulty == EDifficulty.Heroic },
+                    new DifficultyChoice { Name = "Mythic", Difficulty = "Mythic", Unlocked = maxUnlocked >= 3, Selected = currentDifficulty == EDifficulty.Mythic }
                 },
                 Gold = InventoryManager.Instance?.Gold ?? 0,
                 Party = BuildDetailedPartyList()
@@ -330,7 +331,6 @@ namespace AethermancerHarness
                 {
                     choices.Add(new MonsterChoice
                     {
-                        Index = outputIndex,
                         Type = ChoiceType.Random,
                         Name = "Random Monster"
                     });
@@ -343,7 +343,6 @@ namespace AethermancerHarness
 
                     choices.Add(new MonsterChoice
                     {
-                        Index = outputIndex,
                         Type = ChoiceType.Monster,
                         Name = monsterDisplayNames[monsterIndex],
                         HasShiftedVariant = hasShiftedVariant,
@@ -408,7 +407,6 @@ namespace AethermancerHarness
 
                     choices.Add(new EquipmentChoice
                     {
-                        Index = i,
                         Type = ChoiceType.Monster,
                         Name = monster.Name,
                         Level = monster.Level,
@@ -420,7 +418,6 @@ namespace AethermancerHarness
 
             choices.Add(new EquipmentChoice
             {
-                Index = party?.Count ?? 0,
                 Type = ChoiceType.Scrap,
                 GoldValue = scrapValue
             });
@@ -464,7 +461,6 @@ namespace AethermancerHarness
                 var item = stockedItems[i];
                 choices.Add(new MerchantItem
                 {
-                    Index = i,
                     Name = itemDisplayNames[i],
                     Type = item.ItemType.ToString().ToLower(),
                     Rarity = item.ItemRarity.ToString(),
@@ -479,7 +475,6 @@ namespace AethermancerHarness
 
             choices.Add(new MerchantItem
             {
-                Index = stockedItems.Count,
                 Type = ChoiceType.Close.ToString().ToLower(),
                 Name = "Leave Shop"
             });
@@ -516,7 +511,6 @@ namespace AethermancerHarness
             {
                 var choice = new DialogueChoice
                 {
-                    Index = i,
                     Text = dialogueData.DialogueOptions[i]
                 };
 
@@ -583,7 +577,6 @@ namespace AethermancerHarness
 
                     choices.Add(new BoonChoice
                     {
-                        Index = i,
                         Name = StripMarkup(boon.GetName() ?? boon.Name ?? "Unknown Boon"),
                         Element = boon.Element.ToString(),
                         Tier = boon.Tier,
@@ -766,7 +759,7 @@ namespace AethermancerHarness
                 if (skillInstance != null)
                     choices.Add(BuildSkillChoice(skillInstance, i, levelUpType));
                 else
-                    choices.Add(new SkillChoice { Index = i, Error = "Could not read skill" });
+                    choices.Add(new SkillChoice { Error = "Could not read skill" });
             }
 
             int pendingLevelUps = 0;
@@ -783,7 +776,7 @@ namespace AethermancerHarness
             {
                 Phase = GamePhase.SkillSelection,
                 LevelUpType = levelUpType == SkillPicker.ELevelUpType.PickSpell ? "action" : "trait",
-                Monster = levelingMonster != null ? new LevelingMonster { Index = monsterIndex, Name = levelingMonster.Name, Level = levelingMonster.Level } : null,
+                Monster = levelingMonster != null ? new LevelingMonster { Name = levelingMonster.Name, Level = levelingMonster.Level } : null,
                 Choices = choices,
                 RerollsAvailable = InventoryManager.Instance?.SkillRerolls ?? 0,
                 CanChooseMaxHealth = canChooseMaxHealth,
@@ -799,7 +792,6 @@ namespace AethermancerHarness
         {
             var choice = new SkillChoice
             {
-                Index = index,
                 Name = skill.Skill?.Name ?? "Unknown",
                 IsMaverick = skill.Skill?.MaverickSkill ?? false
             };
@@ -844,7 +836,6 @@ namespace AethermancerHarness
                 {
                     actions.Add(new ValidAction
                     {
-                        SkillIndex = skillIdx,
                         Name = StripMarkup(skill.Action?.Name ?? ""),
                         Cost = BuildAetherValues(skill.GetActionCost()),
                         Targets = BuildValidTargets(current, skill),
@@ -881,7 +872,7 @@ namespace AethermancerHarness
                         var e = cc.Enemies[i];
                         if (!e.State.IsDead)
                         {
-                            targets.Add(new TargetInfo { Index = i, Name = enemyDisplayNames[enemyIdx] });
+                            targets.Add(new TargetInfo { Name = enemyDisplayNames[enemyIdx] });
                             enemyIdx++;
                         }
                     }
@@ -902,14 +893,14 @@ namespace AethermancerHarness
                         var m = cc.PlayerMonsters[i];
                         if (!m.State.IsDead)
                         {
-                            targets.Add(new TargetInfo { Index = i, Name = allyDisplayNames[allyIdx] });
+                            targets.Add(new TargetInfo { Name = allyDisplayNames[allyIdx] });
                             allyIdx++;
                         }
                     }
                     break;
 
                 case ETargetType.SelfOrOwner:
-                    targets.Add(new TargetInfo { Index = -1, Name = "self" });
+                    targets.Add(new TargetInfo { Name = "self" });
                     break;
             }
 
@@ -1021,7 +1012,6 @@ namespace AethermancerHarness
                 {
                     var change = new HpChange
                     {
-                        Index = i,
                         Name = StripMarkup(m.Name),
                         Hp = currentHp
                     };
@@ -1082,7 +1072,6 @@ namespace AethermancerHarness
                 {
                     list.Add(new MonsterBuffChanges
                     {
-                        Index = i,
                         Name = StripMarkup(m.Name),
                         Added = added,
                         Removed = removed
@@ -1099,7 +1088,7 @@ namespace AethermancerHarness
             {
                 var m = cc.PlayerMonsters[i];
                 bool canAct = !m.State.IsDead && !(m.Turn?.WasStaggered ?? false);
-                list.Add(new MonsterCanAct { Index = i, Name = StripMarkup(m.Name), CanAct = canAct });
+                list.Add(new MonsterCanAct { Name = StripMarkup(m.Name), CanAct = canAct });
             }
             return list;
         }
@@ -1108,7 +1097,6 @@ namespace AethermancerHarness
         {
             var monster = new CombatMonster
             {
-                Index = index,
                 Name = displayName ?? StripMarkup(m.Name),
                 Hp = m.CurrentHealth,
                 MaxHp = m.Stats?.MaxHealth?.ValueInt ?? 0,
@@ -1128,7 +1116,6 @@ namespace AethermancerHarness
                 {
                     skills.Add(new SkillInfo
                     {
-                        Index = skillIdx,
                         Name = StripMarkup(skill.Action?.Name ?? ""),
                         Description = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                         Cost = BuildAetherValues(skill.GetActionCost()),
@@ -1258,6 +1245,21 @@ namespace AethermancerHarness
             var groups = ExplorationController.Instance?.EncounterGroups;
             if (groups == null) return list;
 
+            // Collect position-based names
+            var groupNames = new List<string>();
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var group = groups[i];
+                if (group == null) continue;
+                var pos = group.transform.position;
+                groupNames.Add($"Monster Group at ({pos.x:F0}, {pos.y:F0})");
+            }
+
+            // Deduplicate names (in case multiple groups are at similar positions)
+            var displayNames = DeduplicateNames(groupNames);
+
+            // Build monster groups list with deduplicated names
+            int displayIndex = 0;
             for (int i = 0; i < groups.Count; i++)
             {
                 var group = groups[i];
@@ -1265,7 +1267,7 @@ namespace AethermancerHarness
                 var pos = group.transform.position;
                 list.Add(new MonsterGroupInfo
                 {
-                    Index = i,
+                    Name = displayNames[displayIndex],
                     X = pos.x,
                     Y = pos.y,
                     Z = pos.z,
@@ -1274,6 +1276,7 @@ namespace AethermancerHarness
                     EncounterType = group.EncounterData?.EncounterType.ToString() ?? "Unknown",
                     MonsterCount = group.OverworldMonsters?.Count ?? 0
                 });
+                displayIndex++;
             }
             return list;
         }
@@ -1471,7 +1474,6 @@ namespace AethermancerHarness
                     list.Add(new InteractableInfo
                     {
                         Type = InteractableType.Portal,
-                        Index = i,
                         X = pos.x,
                         Y = pos.y,
                         Z = pos.z,
@@ -1493,6 +1495,18 @@ namespace AethermancerHarness
 
             var currentMonster = CombatController.Instance?.CurrentMonster;
 
+            // Collect base names for deduplication
+            var consumableNames = new List<string>();
+            for (int i = 0; i < consumables.Count; i++)
+            {
+                var c = consumables[i];
+                consumableNames.Add(StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
+            }
+
+            // Deduplicate names
+            var displayNames = DeduplicateNames(consumableNames);
+
+            // Build consumables list with deduplicated names
             for (int i = 0; i < consumables.Count; i++)
             {
                 var c = consumables[i];
@@ -1500,8 +1514,7 @@ namespace AethermancerHarness
 
                 list.Add(new ConsumableInfo
                 {
-                    Index = i,
-                    Name = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
+                    Name = displayNames[i],
                     Description = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     CurrentCharges = c.Charges,
                     MaxCharges = c.GetMaxCharges(),
@@ -1540,7 +1553,6 @@ namespace AethermancerHarness
 
                 actions.Add(new ActionInfo
                 {
-                    Index = actionIdx,
                     Name = StripMarkup(skill.Action?.Name ?? ""),
                     Description = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                     Cost = BuildAetherValues(skill.GetActionCost()),
@@ -1558,7 +1570,6 @@ namespace AethermancerHarness
         {
             return new MonsterDetails
             {
-                Index = index,
                 Name = StripMarkup(m.Name),
                 Level = m.Level,
                 Hp = m.CurrentHealth,
@@ -1580,6 +1591,20 @@ namespace AethermancerHarness
             var consumables = InventoryManager.Instance?.GetAllConsumables();
             if (consumables == null) return list;
 
+            // Collect base names for items with charges (only items that will be in the list)
+            var artifactNames = new List<string>();
+            for (int i = 0; i < consumables.Count; i++)
+            {
+                var c = consumables[i];
+                if (c.Charges > 0)
+                    artifactNames.Add(StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
+            }
+
+            // Deduplicate names
+            var displayNames = DeduplicateNames(artifactNames);
+
+            // Build artifacts list with deduplicated names
+            int displayIndex = 0;
             for (int i = 0; i < consumables.Count; i++)
             {
                 var c = consumables[i];
@@ -1587,13 +1612,13 @@ namespace AethermancerHarness
 
                 list.Add(new ArtifactInfo
                 {
-                    Index = i,
-                    Name = StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"),
+                    Name = displayNames[displayIndex],
                     Description = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     CurrentCharges = c.Charges,
                     MaxCharges = c.GetMaxCharges(),
                     TargetType = (c.Action?.TargetType ?? ETargetType.SelfOrOwner).ToString()
                 });
+                displayIndex++;
             }
 
             return list;

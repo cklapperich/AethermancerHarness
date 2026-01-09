@@ -284,55 +284,55 @@ namespace AethermancerHarness
         private string HandleCombatAction(string body)
         {
             var json = JsonConfig.Parse(body);
-            var consumableIndex = JsonConfig.Value(json, "consumableIndex", -1);
+            var consumableName = JsonConfig.Value(json, "consumableName", (string)null);
 
-            // Consumables still use index (they're inventory items, not named game entities)
-            if (consumableIndex >= 0)
+            // Consumables use name-based resolution
+            if (!string.IsNullOrEmpty(consumableName))
             {
-                var targetIndex = JsonConfig.Value(json, "targetIndex", -1);
-                return ActionHandler.ExecuteConsumableAction(consumableIndex, targetIndex);
+                var targetName = JsonConfig.Value(json, "targetName", (string)null);
+                return ActionHandler.ExecuteConsumableAction(consumableName, targetName);
             }
 
-            // Combat actions now use names only
+            // Combat actions use names
             var actorName = JsonConfig.Value(json, "actorName", (string)null);
             var skillName = JsonConfig.Value(json, "skillName", (string)null);
-            var targetName = JsonConfig.Value(json, "targetName", (string)null);
+            var targetName2 = JsonConfig.Value(json, "targetName", (string)null);
 
             if (string.IsNullOrEmpty(actorName))
                 return JsonConfig.Error("actorName is required");
             if (string.IsNullOrEmpty(skillName))
                 return JsonConfig.Error("skillName is required");
-            if (string.IsNullOrEmpty(targetName))
+            if (string.IsNullOrEmpty(targetName2))
                 return JsonConfig.Error("targetName is required");
 
-            return ActionHandler.ExecuteCombatAction(actorName, skillName, targetName);
+            return ActionHandler.ExecuteCombatAction(actorName, skillName, targetName2);
         }
 
         private string HandleCombatPreview(string body)
         {
             var json = JsonConfig.Parse(body);
-            var consumableIndex = JsonConfig.Value(json, "consumableIndex", -1);
+            var consumableName = JsonConfig.Value(json, "consumableName", (string)null);
 
-            // Consumables still use index
-            if (consumableIndex >= 0)
+            // Consumables use name-based resolution
+            if (!string.IsNullOrEmpty(consumableName))
             {
-                var targetIndex = JsonConfig.Value(json, "targetIndex", -1);
-                return ActionHandler.ExecuteConsumablePreview(consumableIndex, targetIndex);
+                var targetName = JsonConfig.Value(json, "targetName", (string)null);
+                return ActionHandler.ExecuteConsumablePreview(consumableName, targetName);
             }
 
-            // Combat previews now use names only
+            // Combat previews use names
             var actorName = JsonConfig.Value(json, "actorName", (string)null);
             var skillName = JsonConfig.Value(json, "skillName", (string)null);
-            var targetName = JsonConfig.Value(json, "targetName", (string)null);
+            var targetName2 = JsonConfig.Value(json, "targetName", (string)null);
 
             if (string.IsNullOrEmpty(actorName))
                 return JsonConfig.Error("actorName is required");
             if (string.IsNullOrEmpty(skillName))
                 return JsonConfig.Error("skillName is required");
-            if (string.IsNullOrEmpty(targetName))
+            if (string.IsNullOrEmpty(targetName2))
                 return JsonConfig.Error("targetName is required");
 
-            return ActionHandler.ExecutePreview(actorName, skillName, targetName);
+            return ActionHandler.ExecutePreview(actorName, skillName, targetName2);
         }
 
         private string HandleTeleport(string body)
@@ -347,24 +347,27 @@ namespace AethermancerHarness
         private string HandleCombatStart(string body)
         {
             var json = JsonConfig.Parse(body);
-            var monsterGroupIndex = JsonConfig.Value(json, "monsterGroupIndex", -1);
-            var monsterIndex = JsonConfig.Value(json, "monsterIndex", 0);
+            var monsterGroupName = JsonConfig.Value(json, "monsterGroupName", (string)null);
+            var monsterName = JsonConfig.Value(json, "monsterName", (string)null);
             var useVoidBlitz = JsonConfig.Value(json, "voidBlitz", false);
 
+            if (string.IsNullOrEmpty(monsterGroupName))
+                return JsonConfig.Error("monsterGroupName is required");
+
             if (useVoidBlitz)
-                return ActionHandler.ExecuteVoidBlitz(monsterGroupIndex, monsterIndex);
-            return ActionHandler.ExecuteStartCombat(monsterGroupIndex);
+                return ActionHandler.ExecuteVoidBlitz(monsterGroupName, monsterName);
+            return ActionHandler.ExecuteStartCombat(monsterGroupName);
         }
 
         private string HandleNpcInteract(string body)
         {
             var json = JsonConfig.Parse(body);
-            var npcIndex = JsonConfig.Value(json, "npcIndex", -1);
+            var npcName = JsonConfig.Value(json, "npcName", (string)null);
 
-            if (npcIndex < 0)
-                return JsonConfig.Error("npcIndex is required and must be >= 0");
+            if (string.IsNullOrEmpty(npcName))
+                return JsonConfig.Error("npcName is required");
 
-            return ActionHandler.ExecuteNpcInteract(npcIndex);
+            return ActionHandler.ExecuteNpcInteract(npcName);
         }
 
         private string HandleExplorationInteract(string body)
@@ -375,14 +378,14 @@ namespace AethermancerHarness
 
             var json = JsonConfig.Parse(body);
             var type = JsonConfig.Value(json, "type", (string)null);
-            var index = JsonConfig.Value(json, "index", -1);
+            var name = JsonConfig.Value(json, "name", (string)null);
 
             // If no type specified, use parameterless interact
             if (string.IsNullOrWhiteSpace(type))
                 return ActionHandler.ExecuteInteract();
 
-            // Otherwise, dispatch to the typed interact handler
-            return ActionHandler.ExecuteInteract(type, index);
+            // Otherwise, dispatch to the typed interact handler with name
+            return ActionHandler.ExecuteInteract(type, name);
         }
 
         private string HandleChoice(string body)

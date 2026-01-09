@@ -81,7 +81,6 @@ namespace AethermancerHarness
 
     public class SkillInfo
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public AetherValues Cost { get; set; }
@@ -92,7 +91,6 @@ namespace AethermancerHarness
 
     public class ActionInfo
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public AetherValues Cost { get; set; }
@@ -104,13 +102,11 @@ namespace AethermancerHarness
 
     public class TargetInfo
     {
-        public int Index { get; set; }
         public string Name { get; set; }
     }
 
     public class ValidAction
     {
-        public int SkillIndex { get; set; }
         public string Name { get; set; }
         public AetherValues Cost { get; set; }
         public List<TargetInfo> Targets { get; set; }
@@ -152,7 +148,6 @@ namespace AethermancerHarness
 
     public class MonsterDetails
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public int Level { get; set; }
         public int Hp { get; set; }
@@ -169,7 +164,6 @@ namespace AethermancerHarness
 
     public class CombatMonster
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public int Hp { get; set; }
         public int MaxHp { get; set; }
@@ -187,7 +181,6 @@ namespace AethermancerHarness
 
     public class ConsumableInfo
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public int CurrentCharges { get; set; }
@@ -198,7 +191,6 @@ namespace AethermancerHarness
 
     public class ArtifactInfo
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
         public int CurrentCharges { get; set; }
@@ -208,7 +200,6 @@ namespace AethermancerHarness
 
     public class HpChange
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public int Hp { get; set; }
         public bool? IsDead { get; set; }
@@ -216,7 +207,6 @@ namespace AethermancerHarness
 
     public class MonsterBuffChanges
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public List<BuffChange> Added { get; set; }
         public List<BuffRemoved> Removed { get; set; }
@@ -236,7 +226,6 @@ namespace AethermancerHarness
 
     public class MonsterCanAct
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public bool CanAct { get; set; }
     }
@@ -247,7 +236,6 @@ namespace AethermancerHarness
         public double X { get; set; }
         public double Y { get; set; }
         public double Z { get; set; }
-        public int? Index { get; set; }
         public string Name { get; set; }
         public bool? Used { get; set; }
         public bool? Defeated { get; set; }
@@ -261,7 +249,7 @@ namespace AethermancerHarness
 
     public class MonsterGroupInfo
     {
-        public int Index { get; set; }
+        public string Name { get; set; }
         public double X { get; set; }
         public double Y { get; set; }
         public double Z { get; set; }
@@ -280,7 +268,6 @@ namespace AethermancerHarness
 
     public class DifficultyChoice
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Difficulty { get; set; }
         public bool Unlocked { get; set; }
@@ -289,7 +276,6 @@ namespace AethermancerHarness
 
     public class MonsterChoice
     {
-        public int Index { get; set; }
         public ChoiceType Type { get; set; }
         public string Name { get; set; }
         public bool? HasShiftedVariant { get; set; }
@@ -298,7 +284,6 @@ namespace AethermancerHarness
 
     public class EquipmentChoice
     {
-        public int Index { get; set; }
         public ChoiceType Type { get; set; }
         public string Name { get; set; }
         public int? Level { get; set; }
@@ -309,7 +294,6 @@ namespace AethermancerHarness
 
     public class SkillChoice
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public bool IsMaverick { get; set; }
         public string Description { get; set; }
@@ -325,7 +309,6 @@ namespace AethermancerHarness
 
     public class DialogueChoice
     {
-        public int Index { get; set; }
         public string Text { get; set; }
         public string Type { get; set; }
         public EquipmentInfo Equipment { get; set; }
@@ -333,7 +316,6 @@ namespace AethermancerHarness
 
     public class MerchantItem
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Type { get; set; }
         public string Rarity { get; set; }
@@ -347,7 +329,6 @@ namespace AethermancerHarness
 
     public class LevelingMonster
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public int Level { get; set; }
     }
@@ -466,7 +447,6 @@ namespace AethermancerHarness
 
     public class BoonChoice
     {
-        public int Index { get; set; }
         public string Name { get; set; }
         public string Element { get; set; }
         public int Tier { get; set; }

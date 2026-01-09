@@ -147,16 +147,15 @@ namespace AethermancerHarness
                 {
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUI:
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUIDetailed:
-                        if (worthinessCanContinue)
+                        // Worthiness screen requires "spamming spacebar" - no indication when ready
+                        // Just keep triggering continue until state changes
+                        Plugin.Log.LogInfo($"ProcessPostCombatStates: Worthiness state, triggering Continue (CanContinue={worthinessCanContinue})");
+                        Plugin.RunOnMainThreadAndWait(() =>
                         {
-                            Plugin.Log.LogInfo("ProcessPostCombatStates: Worthiness CanContinue, triggering Continue");
-                            Plugin.RunOnMainThreadAndWait(() =>
-                            {
-                                var menu = UIController.Instance?.PostCombatMenu;
-                                if (menu != null) TriggerContinue(menu);
-                            });
-                            System.Threading.Thread.Sleep(200);
-                        }
+                            var menu = UIController.Instance?.PostCombatMenu;
+                            if (menu != null) TriggerContinue(menu);
+                        });
+                        System.Threading.Thread.Sleep(200);
                         break;
 
                     case PostCombatMenu.EPostCombatMenuState.LevelUpUI:
@@ -974,7 +973,7 @@ namespace AethermancerHarness
             }
         }
 
-        public static string ExecuteNpcInteract(int npcIndex)
+        public static string ExecuteNpcInteract(string npcName)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
                 return JsonConfig.Error("Cannot interact with NPCs during combat");
@@ -990,19 +989,38 @@ namespace AethermancerHarness
             if (interactables == null || interactables.Count == 0)
                 return JsonConfig.Error("No NPCs on map");
 
-            if (npcIndex < 0 || npcIndex >= interactables.Count)
-                return JsonConfig.Error($"Invalid NPC index: {npcIndex}. Valid range: 0-{interactables.Count - 1}");
+            // Build NPC names
+            var npcNames = new System.Collections.Generic.List<string>();
+            foreach (var interactable in interactables)
+            {
+                if (interactable == null) continue;
+                var gameObjectName = interactable.gameObject.name;
 
-            var interactable = interactables[npcIndex];
-            if (interactable == null)
+                // Check for care chest pattern first
+                string name;
+                if (gameObjectName.Contains("SmallEvent_NPC_Collectable"))
+                    name = "Care Chest";
+                else
+                    name = interactable.DialogueCharacter?.CharacterName ?? gameObjectName;
+
+                npcNames.Add(name);
+            }
+
+            var npcDisplayNames = StateSerializer.DeduplicateNames(npcNames);
+            var (npcIndex, npcError) = StateSerializer.ResolveNameToIndex(npcName, npcDisplayNames, "NPC");
+
+            if (npcIndex < 0)
+                return JsonConfig.Error(npcError);
+
+            var resolvedInteractable = interactables[npcIndex];
+            if (resolvedInteractable == null)
                 return JsonConfig.Error("NPC is null");
 
-            var npc = interactable as DialogueInteractable;
+            var npc = resolvedInteractable as DialogueInteractable;
             if (npc == null)
                 return JsonConfig.Error("Interactable is not a DialogueInteractable");
 
-            var npcName = npc.DialogueCharacter?.CharacterName ?? "Unknown";
-            Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName} at index {npcIndex}");
+            Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName}");
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
