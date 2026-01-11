@@ -20,8 +20,9 @@ namespace AethermancerHarness
         /// </summary>
         public static string TeleportAndInteract(string interactableName)
         {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot interact during combat");
+            var (valid, combatError) = ValidateNotInCombat();
+            if (!valid)
+                return JsonConfig.Error(combatError);
 
             // Find the interactable
             var (interactable, interactableType, error) = FindInteractableByName(interactableName);
@@ -278,11 +279,13 @@ namespace AethermancerHarness
 
         public static string ExecuteVoidBlitz(string monsterGroupName, string monsterName = null)
         {
-            if (GameStateManager.Instance?.IsCombat ?? true)
-                return JsonConfig.Error("Cannot void blitz during combat");
+            var (notInCombat, combatError) = ValidateNotInCombat();
+            if (!notInCombat)
+                return JsonConfig.Error(combatError);
 
-            if (!GameStateManager.Instance.IsExploring)
-                return JsonConfig.Error("Must be in exploration mode to void blitz");
+            var (isExploring, exploringError) = ValidateExploring();
+            if (!isExploring)
+                return JsonConfig.Error(exploringError);
 
             var groups = ExplorationController.Instance?.EncounterGroups;
             if (groups == null || groups.Count == 0)
@@ -379,8 +382,9 @@ namespace AethermancerHarness
         /// </summary>
         public static string ExecuteInteract()
         {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot interact during combat");
+            var (valid, error) = ValidateNotInCombat();
+            if (!valid)
+                return JsonConfig.Error(error);
 
             // Priority order for auto-selection
             var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
@@ -454,8 +458,9 @@ namespace AethermancerHarness
 
         public static string ExecuteLootAll()
         {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot loot during combat");
+            var (valid, validError) = ValidateNotInCombat();
+            if (!valid)
+                return JsonConfig.Error(validError);
 
             int brokenCount = 0;
             string error = null;

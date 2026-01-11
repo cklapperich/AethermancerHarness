@@ -462,6 +462,12 @@ namespace AethermancerHarness
             if (displayedMonsters == null || displayedMonsters.Count == 0)
                 return JsonConfig.Error("No monsters available");
 
+            // Validate choice index (including random option)
+            int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
+            var indexError = ValidateChoiceIndex(choiceIndex, totalCount, "monster");
+            if (choiceIndex != -1 && indexError != null)
+                return indexError;
+
             // Handle reroll (choiceIndex == -1)
             if (choiceIndex == -1)
             {
@@ -507,12 +513,6 @@ namespace AethermancerHarness
                 }
             }
 
-            // Calculate total count including random entry
-            int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
-
-            // Validate choice index
-            if (choiceIndex < 0 || choiceIndex >= totalCount)
-                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{totalCount - 1}");
 
             // Check if selecting random
             var isRandom = selection.HasRandomMonster && choiceIndex == selection.RandomMonsterPosition;
@@ -682,9 +682,10 @@ namespace AethermancerHarness
 
             int scrapIndex = party.Count;
 
-            // Validate choice index
-            if (choiceIndex < 0 || choiceIndex > scrapIndex)
-                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{scrapIndex}");
+            // Validate choice index (inclusive - scrap is at end)
+            var indexError = ValidateChoiceIndexInclusive(choiceIndex, scrapIndex, "equipment");
+            if (indexError != null)
+                return indexError;
 
             // Handle scrap
             if (choiceIndex == scrapIndex)
@@ -1229,8 +1230,10 @@ namespace AethermancerHarness
             if (options == null || options.Length == 0)
                 return JsonConfig.Error("No dialogue options available");
 
-            if (choiceIndex < 0 || choiceIndex >= options.Length)
-                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{options.Length - 1}");
+            // Validate choice index
+            var indexError = ValidateChoiceIndex(choiceIndex, options.Length, "dialogue");
+            if (indexError != null)
+                return indexError;
 
             var selectedOptionText = options[choiceIndex];
             Plugin.Log.LogInfo($"ExecuteDialogueChoice: Selecting option {choiceIndex}: '{selectedOptionText}'");
@@ -1412,16 +1415,17 @@ namespace AethermancerHarness
 
             var stockedItems = merchant.StockedItems;
 
-            // Check if this is the "close" pseudo-choice (last index)
+            // Check if this is the "close" pseudo-choice (last index, inclusive)
             if (choiceIndex == stockedItems.Count)
             {
                 Plugin.Log.LogInfo("ExecuteMerchantChoice: Close shop selected");
                 return ExecuteMerchantClose();
             }
 
-            // Otherwise treat as a buy action
-            if (choiceIndex < 0 || choiceIndex >= stockedItems.Count)
-                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Valid range: 0-{stockedItems.Count} (last is 'Leave Shop')");
+            // Validate choice index for buy action
+            var indexError = ValidateChoiceIndex(choiceIndex, stockedItems.Count, "merchant item");
+            if (indexError != null)
+                return indexError;
 
             var shopItem = stockedItems[choiceIndex];
 
@@ -1495,6 +1499,11 @@ namespace AethermancerHarness
             if (menu == null || !menu.IsOpen)
                 return JsonConfig.Error("Difficulty selection menu not available");
 
+            // Validate choice index (3 difficulties: 0=Normal, 1=Heroic, 2=Mythic)
+            var indexError = ValidateChoiceIndex(choiceIndex, 3, "difficulty");
+            if (indexError != null)
+                return indexError;
+
             EDifficulty targetDifficulty;
             switch (choiceIndex)
             {
@@ -1508,7 +1517,8 @@ namespace AethermancerHarness
                     targetDifficulty = EDifficulty.Mythic;
                     break;
                 default:
-                    return JsonConfig.Error($"Invalid difficulty index: {choiceIndex}. Valid: 0=Normal, 1=Heroic, 2=Mythic");
+                    // This shouldn't happen after validation, but keep as safety
+                    return JsonConfig.Error($"Invalid difficulty index: {choiceIndex}");
             }
 
             var maxUnlocked = ProgressManager.Instance?.UnlockedDifficulty ?? 1;
@@ -1591,8 +1601,10 @@ namespace AethermancerHarness
             if (!StateSerializer.IsInAetherSpringMenu())
                 return JsonConfig.Error("No aether spring menu open");
 
-            if (choiceIndex < 0 || choiceIndex > 1)
-                return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Must be 0 or 1");
+            // Validate choice index (2 boons: 0=left, 1=right, inclusive)
+            var indexError = ValidateChoiceIndexInclusive(choiceIndex, 1, "boon");
+            if (indexError != null)
+                return indexError;
 
             var menu = GetAetherSpringMenu();
             if (menu == null)
