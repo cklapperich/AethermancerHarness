@@ -1,7 +1,4 @@
 using System;
-using System.Collections;
-using System.Reflection;
-using System.Threading;
 using Newtonsoft.Json.Linq;
 
 namespace AethermancerHarness
@@ -17,13 +14,11 @@ namespace AethermancerHarness
 
         public static string WaitForPostCombatComplete(int timeoutMs = 60000)
         {
-            // This method can be called from HTTP thread - it handles its own threading
             var startTime = DateTime.Now;
             Plugin.Log.LogInfo("WaitForPostCombatComplete: Starting post-combat auto-advance");
 
             while (true)
             {
-                // Check states on main thread
                 bool postCombatOpen = false;
                 bool inExploration = false;
                 string explorationResult = null;
@@ -49,11 +44,8 @@ namespace AethermancerHarness
                 }
 
                 if (TimedOut(startTime, timeoutMs))
-                {
                     return JsonConfig.Error("Timeout waiting for PostCombatMenu to open", new { phase = GamePhase.Timeout });
-                }
 
-                // Sleep on HTTP thread - doesn't block Unity
                 System.Threading.Thread.Sleep(100);
             }
 
@@ -62,14 +54,11 @@ namespace AethermancerHarness
 
         private static string ProcessPostCombatStates(DateTime startTime, int timeoutMs)
         {
-            // This method can be called from HTTP thread - it handles its own threading
-
             while (true)
             {
                 if (TimedOut(startTime, timeoutMs))
                     return JsonConfig.Error("Timeout waiting for post-combat processing", new { phase = GamePhase.Timeout });
 
-                // Check all state conditions on main thread
                 bool inSkillSelection = false;
                 bool inEndOfRun = false;
                 bool inExploration = false;
@@ -176,40 +165,84 @@ namespace AethermancerHarness
                         break;
                 }
 
-                // Sleep on HTTP thread - doesn't block Unity
                 System.Threading.Thread.Sleep(100);
             }
         }
 
         /// <summary>
-        /// Quick check if all worthiness UIs can continue. MUST be called on main thread.
+        /// Check if all worthiness UIs can continue. MUST be called on main thread.
         /// </summary>
         private static bool CheckWorthinessCanContinue(PostCombatMenu postCombatMenu)
         {
+            return CheckAllMonsterInfosCanContinue(postCombatMenu, info => info.WorthinessUI.CanContinue);
+        }
+
+        /// <summary>
+        /// Check if all level up UIs can continue. MUST be called on main thread.
+        /// </summary>
+        private static bool CheckLevelUpCanContinue(PostCombatMenu postCombatMenu)
+        {
+            return CheckAllMonsterInfosCanContinue(postCombatMenu, info => info.LevelUpUI.CanContinue);
+        }
+
+        private static bool CheckAllMonsterInfosCanContinue(
+            PostCombatMenu postCombatMenu,
+            System.Func<PostCombatMonsterInfo, bool> canContinueCheck)
+        {
             foreach (var info in postCombatMenu.PostCombatMonsterInfos)
             {
-                if (info.monster != null && info.gameObject.activeSelf && !info.WorthinessUI.CanContinue)
+                if (info.monster != null && info.gameObject.activeSelf && !canContinueCheck(info))
                     return false;
             }
             return true;
         }
 
         /// <summary>
-        /// Quick check if all level up UIs can continue. MUST be called on main thread.
+        /// Wait until a condition is met or timeout. Polls on HTTP thread. Returns true if condition was met.
         /// </summary>
-        private static bool CheckLevelUpCanContinue(PostCombatMenu postCombatMenu)
+        private static bool WaitUntil(System.Func<bool> condition, int timeoutMs, int pollIntervalMs = 100)
         {
-            foreach (var info in postCombatMenu.PostCombatMonsterInfos)
+            var startTime = DateTime.Now;
+            while (!TimedOut(startTime, timeoutMs))
             {
-                if (info.monster != null && info.gameObject.activeSelf && !info.LevelUpUI.CanContinue)
-                    return false;
+                if (condition())
+                    return true;
+                System.Threading.Thread.Sleep(pollIntervalMs);
             }
-            return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Wait until a condition is met or timeout, checking on main thread. Returns true if condition was met.
+        /// </summary>
+        private static bool WaitUntilOnMainThread(System.Func<bool> condition, int timeoutMs, int pollIntervalMs = 100)
+        {
+            var startTime = DateTime.Now;
+            while (!TimedOut(startTime, timeoutMs))
+            {
+                bool result = false;
+                Plugin.RunOnMainThreadAndWait(() => result = condition());
+                if (result)
+                    return true;
+                System.Threading.Thread.Sleep(pollIntervalMs);
+            }
+            return false;
         }
 
         private static bool IsPostCombatMenuOpen()
         {
             return UIController.Instance?.PostCombatMenu?.IsOpen ?? false;
+        }
+
+        private static (EMonsterShift shift, string error) ParseShiftParameter(string shift)
+        {
+            if (string.IsNullOrEmpty(shift) || shift.Equals("normal", StringComparison.OrdinalIgnoreCase))
+                return (EMonsterShift.Normal, null);
+
+            if (shift.Equals("shifted", StringComparison.OrdinalIgnoreCase))
+                return (EMonsterShift.Shifted, null);
+
+            return (EMonsterShift.Normal, JsonConfig.Error($"Invalid shift value: '{shift}'. Use 'normal' or 'shifted'."));
         }
 
         private static bool IsInExploration()
@@ -220,14 +253,9 @@ namespace AethermancerHarness
             return notInCombat && notInPostCombat && notInEndOfRun;
         }
 
-        /// <summary>
-        /// Auto-continue from end of run screen. MUST be called on main thread.
-        /// </summary>
         private static void AutoContinueFromEndOfRun()
         {
-            var menu = GetEndOfRunMenu();
-            bool isVictory = menu.VictoryBanner.activeSelf;
-            menu.Close();
+            GetEndOfRunMenu().Close();
         }
 
         private static PostCombatMonsterInfo FindFirstPendingLevelUp(PostCombatMenu postCombatMenu)
@@ -249,17 +277,8 @@ namespace AethermancerHarness
 
         private static bool WaitForSkillSelectionOpen(DateTime startTime, int timeoutMs)
         {
-            // This method can be called from HTTP thread - it handles its own threading
-            while (!TimedOut(startTime, timeoutMs))
-            {
-                bool isOpen = false;
-                Plugin.RunOnMainThreadAndWait(() => isOpen = StateSerializer.IsInSkillSelection());
-                if (isOpen)
-                    return true;
-                // Sleep on HTTP thread - doesn't block Unity
-                System.Threading.Thread.Sleep(100);
-            }
-            return false;
+            int remainingMs = timeoutMs - (int)(DateTime.Now - startTime).TotalMilliseconds;
+            return remainingMs > 0 && WaitUntilOnMainThread(StateSerializer.IsInSkillSelection, remainingMs);
         }
 
         private static string CreateExplorationResult(CombatResult combatResult)
@@ -281,36 +300,12 @@ namespace AethermancerHarness
             var skillSelectMenu = UIController.Instance.PostCombatMenu.SkillSelectMenu;
             var menuList = skillSelectMenu.MenuList;
 
-            // Handle reroll (choiceIndex == -1)
             if (choiceIndex == -1)
-            {
-                if (InventoryManager.Instance.SkillRerolls <= 0)
-                    return JsonConfig.Error("No skill rerolls available");
+                return HandleSkillReroll(menuList, skillSelectMenu);
 
-                int rerollIndex = FindMenuItemIndex(menuList, skillSelectMenu.RerollSkillsButton);
-                if (rerollIndex == -1)
-                    return JsonConfig.Error("Could not find reroll button");
-
-                menuList.SelectByIndex(rerollIndex);
-                TriggerMenuConfirm(menuList);
-                System.Threading.Thread.Sleep(500);
-                return StateSerializer.GetSkillSelectionStateJson();
-            }
-
-            // Handle max health bonus (choiceIndex == 3)
             if (choiceIndex == 3)
-            {
-                int bonusIndex = FindMenuItemIndex(menuList, skillSelectMenu.AlternativeBonusButton);
-                if (bonusIndex == -1)
-                    return JsonConfig.Error("Max health option not available");
+                return HandleMaxHealthBonus(menuList, skillSelectMenu);
 
-                menuList.SelectByIndex(bonusIndex);
-                TriggerMenuConfirm(menuList);
-                System.Threading.Thread.Sleep(500);
-                return WaitForPostCombatComplete();
-            }
-
-            // Handle skill selection (choiceIndex 0-2)
             if (choiceIndex >= 0 && choiceIndex <= 2)
             {
                 menuList.SelectByIndex(choiceIndex);
@@ -320,6 +315,33 @@ namespace AethermancerHarness
             }
 
             return JsonConfig.Error($"Invalid choice index: {choiceIndex}. Use 0-2 for skills, 3 for max health, -1 for reroll.");
+        }
+
+        private static string HandleSkillReroll(MenuList menuList, SkillSelectMenu skillSelectMenu)
+        {
+            if (InventoryManager.Instance.SkillRerolls <= 0)
+                return JsonConfig.Error("No skill rerolls available");
+
+            int rerollIndex = FindMenuItemIndex(menuList, skillSelectMenu.RerollSkillsButton);
+            if (rerollIndex == -1)
+                return JsonConfig.Error("Could not find reroll button");
+
+            menuList.SelectByIndex(rerollIndex);
+            TriggerMenuConfirm(menuList);
+            System.Threading.Thread.Sleep(500);
+            return StateSerializer.GetSkillSelectionStateJson();
+        }
+
+        private static string HandleMaxHealthBonus(MenuList menuList, SkillSelectMenu skillSelectMenu)
+        {
+            int bonusIndex = FindMenuItemIndex(menuList, skillSelectMenu.AlternativeBonusButton);
+            if (bonusIndex == -1)
+                return JsonConfig.Error("Max health option not available");
+
+            menuList.SelectByIndex(bonusIndex);
+            TriggerMenuConfirm(menuList);
+            System.Threading.Thread.Sleep(500);
+            return WaitForPostCombatComplete();
         }
 
         private static int FindMenuItemIndex(MenuList menuList, UnityEngine.MonoBehaviour targetItem)
@@ -338,52 +360,30 @@ namespace AethermancerHarness
 
         public static string ExecuteChoice(string choiceName, string shift = null)
         {
-            // Resolve choice name to index based on current context
             var (choiceIndex, error) = ResolveChoiceName(choiceName);
             if (error != null)
                 return JsonConfig.Error(error);
 
-            // Check skill selection
             if (StateSerializer.IsInSkillSelection())
-            {
                 return ExecuteSkillSelectionChoice(choiceIndex);
-            }
 
-            // Check equipment selection first (after picking equipment from dialogue/loot)
             if (StateSerializer.IsInEquipmentSelection())
-            {
                 return ExecuteEquipmentChoice(choiceIndex);
-            }
 
-            // Check merchant menu
             if (IsMerchantMenuOpen())
-            {
                 return ExecuteMerchantChoice(choiceIndex);
-            }
 
-            // Check difficulty selection (run start)
             if (StateSerializer.IsInDifficultySelection())
-            {
                 return ExecuteDifficultyChoice(choiceIndex);
-            }
 
-            // Check monster selection (shrine/starter)
             if (StateSerializer.IsInMonsterSelection())
-            {
                 return ExecuteMonsterSelectionChoice(choiceIndex, shift);
-            }
 
-            // Check aether spring menu
             if (StateSerializer.IsInAetherSpringMenu())
-            {
                 return ExecuteAetherSpringChoice(choiceIndex);
-            }
 
-            // Check dialogue
             if (IsDialogueOpen())
-            {
                 return ExecuteDialogueChoice(choiceIndex);
-            }
 
             return JsonConfig.Error("No active choice context (not in dialogue, equipment selection, difficulty selection, merchant, or monster selection)");
         }
@@ -401,171 +401,128 @@ namespace AethermancerHarness
             var selection = menu.MonsterSelection;
             var displayedMonsters = menu.DisplayedMonsters;
 
-            // Validate choice index (including random option)
             int totalCount = displayedMonsters.Count + (selection.HasRandomMonster ? 1 : 0);
             var indexError = ValidateChoiceIndex(choiceIndex, totalCount, "monster");
             if (choiceIndex != -1 && indexError != null)
                 return indexError;
 
-            // Handle reroll (choiceIndex == -1)
             if (choiceIndex == -1)
-            {
-                var shrineRerolls = InventoryManager.Instance.ShrineRerolls;
-                var shrineState = menu.ShrineSelectionState;
+                return HandleMonsterReroll(menu);
 
-                if (shrineRerolls <= 0)
-                    return JsonConfig.Error("No shrine rerolls available");
-
-                if (shrineState != EShrineState.NormalShrineSelection)
-                    return JsonConfig.Error("Reroll not available for this shrine type");
-
-                Plugin.RunOnMainThreadAndWait(() =>
-                {
-                    InventoryManager.Instance.RemoveShrineReroll();
-                    var shrineTrigger = LevelGenerator.Instance.Map.MonsterShrine as MonsterShrineTrigger;
-                    shrineTrigger.GenerateMementosForShrine(ignoreHasData: true, isReroll: true);
-                });
-
-                System.Threading.Thread.Sleep(500);
-                return StateSerializer.GetMonsterSelectionStateJson();
-            }
-
-
-            // Check if selecting random
             var isRandom = selection.HasRandomMonster && choiceIndex == selection.RandomMonsterPosition;
+            int adjustedIndex = isRandom ? choiceIndex
+                : (selection.HasRandomMonster && choiceIndex > selection.RandomMonsterPosition ? choiceIndex - 1 : choiceIndex);
 
-            // Calculate adjusted index for displayedMonsters (skip random option position)
-            int adjustedIndex = choiceIndex;
-            if (!isRandom && selection.HasRandomMonster && choiceIndex > selection.RandomMonsterPosition)
-            {
-                adjustedIndex = choiceIndex - 1;
-            }
+            string monsterName = isRandom ? "Random Monster" : displayedMonsters[adjustedIndex].Name;
+            Monster selectedMonster = isRandom ? null : displayedMonsters[adjustedIndex];
 
-            // Get monster name - for random, use "Random Monster"; otherwise use adjusted index
-            string monsterName;
-            Monster selectedMonster = null;
-            if (isRandom)
-            {
-                monsterName = "Random Monster";
-            }
-            else
-            {
-                selectedMonster = displayedMonsters[adjustedIndex];
-                monsterName = selectedMonster.Name;
-            }
+            var (targetShift, shiftError) = ParseShiftParameter(shift);
+            if (shiftError != null)
+                return shiftError;
 
-            // Parse shift parameter
-            EMonsterShift targetShift = EMonsterShift.Normal;
-            if (!string.IsNullOrEmpty(shift))
+            if (targetShift == EMonsterShift.Shifted && !isRandom &&
+                !InventoryManager.Instance.HasShiftedMementosOfMonster(selectedMonster))
             {
-                if (shift.Equals("shifted", System.StringComparison.OrdinalIgnoreCase))
-                    targetShift = EMonsterShift.Shifted;
-                else if (!shift.Equals("normal", System.StringComparison.OrdinalIgnoreCase))
-                    return JsonConfig.Error($"Invalid shift value: '{shift}'. Use 'normal' or 'shifted'.");
-            }
-
-            // Validate shifted variant is available if requested
-            if (targetShift == EMonsterShift.Shifted && !isRandom)
-            {
-                bool hasShiftedVariant = InventoryManager.Instance.HasShiftedMementosOfMonster(selectedMonster);
-                if (!hasShiftedVariant)
-                    return JsonConfig.Error($"Shifted variant not available for {monsterName}");
+                return JsonConfig.Error($"Shifted variant not available for {monsterName}");
             }
 
             try
             {
-                // Run UI operations on main thread
                 Plugin.RunOnMainThreadAndWait(() =>
                 {
-                    // Set the selection index (use adjustedIndex + 1 because game is 1-indexed)
                     selection.SetSelectedIndex(adjustedIndex + 1);
 
-                    // Set the shift (only applies to non-random monsters with shifted variants)
                     if (!isRandom && targetShift != selection.CurrentShift)
                     {
                         selection.CurrentShift = targetShift;
                         selectedMonster.SetShift(targetShift);
                     }
 
-                    // Auto-confirm via reflection (skip confirmation popup)
                     if (ConfirmSelectionMethod != null)
-                    {
                         ConfirmSelectionMethod.Invoke(menu, null);
-                    }
                     else
-                    {
                         menu.OnConfirm();
-                    }
                 });
 
-                // Wait for the selection to process
                 System.Threading.Thread.Sleep(500);
 
-                // Wait a bit more for state transitions
-                var startTime = DateTime.Now;
-                while (!TimedOut(startTime, 3000))
-                {
-                    // If equipment selection opened (for replacement), return that state
-                    if (StateSerializer.IsInEquipmentSelection())
-                    {
-                        return JsonConfig.Serialize(new
-                        {
-                            success = true,
-                            action = "monster_selected",
-                            selected = monsterName,
-                            shift = targetShift,
-                            isRandom = isRandom,
-                            phase = GamePhase.EquipmentSelection,
-                            note = "Select which monster to replace"
-                        });
-                    }
-
-                    // If skill selection opened (post-rebirth XP), return that state
-                    if (StateSerializer.IsInSkillSelection())
-                    {
-                        return JsonConfig.Serialize(new
-                        {
-                            success = true,
-                            action = "monster_selected",
-                            selected = monsterName,
-                            shift = targetShift,
-                            isRandom = isRandom,
-                            phase = GamePhase.SkillSelection,
-                            note = "Monster rebirthed with XP - select skill"
-                        });
-                    }
-
-                    // If still in monster selection, wait a bit more
-                    if (StateSerializer.IsInMonsterSelection())
-                    {
-                        System.Threading.Thread.Sleep(100);
-                        continue;
-                    }
-
-                    // Otherwise we're done - back to exploration
-                    break;
-                }
-
-                // Final state check
-                if (StateSerializer.IsInSkillSelection())
-                {
-                    return StateSerializer.GetSkillSelectionStateJson();
-                }
-
-                return JsonConfig.Serialize(new
-                {
-                    success = true,
-                    action = "monster_selected",
-                    selected = monsterName,
-                    shift = targetShift,
-                    isRandom = isRandom,
-                    phase = GamePhase.Exploration
-                });
+                return WaitForMonsterSelectionResult(monsterName, targetShift, isRandom);
             }
             catch (System.Exception ex)
             {
                 return JsonConfig.Error($"Exception during monster selection: {ex.Message}");
             }
+        }
+
+        private static string WaitForMonsterSelectionResult(string monsterName, EMonsterShift targetShift, bool isRandom)
+        {
+            var startTime = DateTime.Now;
+            while (!TimedOut(startTime, 3000))
+            {
+                if (StateSerializer.IsInEquipmentSelection())
+                {
+                    return BuildMonsterSelectedResult(monsterName, targetShift, isRandom,
+                        GamePhase.EquipmentSelection, "Select which monster to replace");
+                }
+
+                if (StateSerializer.IsInSkillSelection())
+                {
+                    return BuildMonsterSelectedResult(monsterName, targetShift, isRandom,
+                        GamePhase.SkillSelection, "Monster rebirthed with XP - select skill");
+                }
+
+                if (!StateSerializer.IsInMonsterSelection())
+                    break;
+
+                System.Threading.Thread.Sleep(100);
+            }
+
+            if (StateSerializer.IsInSkillSelection())
+                return StateSerializer.GetSkillSelectionStateJson();
+
+            return BuildMonsterSelectedResult(monsterName, targetShift, isRandom, GamePhase.Exploration, null);
+        }
+
+        private static string BuildMonsterSelectedResult(
+            string monsterName,
+            EMonsterShift targetShift,
+            bool isRandom,
+            GamePhase phase,
+            string note)
+        {
+            var result = new JObject
+            {
+                ["success"] = true,
+                ["action"] = "monster_selected",
+                ["selected"] = monsterName,
+                ["shift"] = targetShift.ToString(),
+                ["isRandom"] = isRandom,
+                ["phase"] = phase.ToString()
+            };
+
+            if (note != null)
+                result["note"] = note;
+
+            return result.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        private static string HandleMonsterReroll(MonsterShrineMenu menu)
+        {
+            if (InventoryManager.Instance.ShrineRerolls <= 0)
+                return JsonConfig.Error("No shrine rerolls available");
+
+            if (menu.ShrineSelectionState != EShrineState.NormalShrineSelection)
+                return JsonConfig.Error("Reroll not available for this shrine type");
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                InventoryManager.Instance.RemoveShrineReroll();
+                var shrineTrigger = LevelGenerator.Instance.Map.MonsterShrine as MonsterShrineTrigger;
+                shrineTrigger.GenerateMementosForShrine(ignoreHasData: true, isReroll: true);
+            });
+
+            System.Threading.Thread.Sleep(500);
+            return StateSerializer.GetMonsterSelectionStateJson();
         }
 
         // =====================================================
@@ -579,17 +536,11 @@ namespace AethermancerHarness
 
             var menu = UIController.Instance.MonsterSelectMenu;
             var party = MonsterManager.Instance.Active;
-            int scrapIndex = party.Count;
 
-            // Handle scrap
-            if (choiceIndex == scrapIndex)
-            {
+            if (choiceIndex == party.Count)
                 return ExecuteEquipmentScrap(menu);
-            }
 
-            // Handle assign to monster
-            var targetMonster = party[choiceIndex];
-            return ExecuteEquipmentAssign(menu, targetMonster, choiceIndex);
+            return ExecuteEquipmentAssign(menu, party[choiceIndex], choiceIndex);
         }
 
         private static string ExecuteEquipmentAssign(MonsterSelectMenu menu, Monster targetMonster, int monsterIndex)
@@ -606,7 +557,6 @@ namespace AethermancerHarness
 
             System.Threading.Thread.Sleep(600);
 
-            // Check if we're still in equipment selection (happens when monster had equipment - trade scenario)
             if (StateSerializer.IsInEquipmentSelection())
             {
                 var prevEquipName = prevEquipment?.Equipment?.GetName() ?? "Unknown";
@@ -647,17 +597,9 @@ namespace AethermancerHarness
 
             System.Threading.Thread.Sleep(300);
 
-            // The game shows a popup after scrapping - we need to close it
-            var startTime = DateTime.Now;
-            while ((DateTime.Now - startTime).TotalMilliseconds < 2000)
-            {
-                if (PopupController.Instance.IsOpen)
-                {
-                    Plugin.RunOnMainThreadAndWait(() => PopupController.Instance.Close());
-                    break;
-                }
-                System.Threading.Thread.Sleep(50);
-            }
+            // Close the popup that appears after scrapping
+            if (WaitUntil(() => PopupController.Instance.IsOpen, 2000, 50))
+                Plugin.RunOnMainThreadAndWait(() => PopupController.Instance.Close());
 
             System.Threading.Thread.Sleep(300);
 
@@ -705,8 +647,6 @@ namespace AethermancerHarness
             var display = UIController.Instance.DialogueDisplay;
             var options = dialogueData.DialogueOptions;
 
-            // Handle text-only dialogue (no options) - just advance
-            // The caller can send any value for choiceIndex here, it ignores the parameter. This behavior is UNDOCUMENTED
             if (options == null || options.Length == 0)
             {
                 Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
@@ -718,10 +658,7 @@ namespace AethermancerHarness
                 return StateSerializer.GetDialogueStateJson();
             }
 
-            var selectedOptionText = options[choiceIndex];
-
-            bool isEnd = false;
-            bool forceSkip = false;
+            bool isEndAndForceSkip = false;
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
@@ -735,9 +672,10 @@ namespace AethermancerHarness
                     characterDisplay.DialogOptions.SelectByIndex(choiceIndex);
 
                 dialogueInteractable.TriggerNodeOnCloseEvents();
-                dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
+                dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out bool isEnd, out bool forceSkip);
 
-                if (isEnd && forceSkip)
+                isEndAndForceSkip = isEnd && forceSkip;
+                if (isEndAndForceSkip)
                 {
                     UIController.Instance.SetDialogueVisibility(visible: false);
                 }
@@ -749,13 +687,7 @@ namespace AethermancerHarness
                 }
             });
 
-            if (isEnd && forceSkip)
-            {
-                System.Threading.Thread.Sleep(300);
-                return GetPostDialogueState();
-            }
-
-            System.Threading.Thread.Sleep(200);
+            System.Threading.Thread.Sleep(isEndAndForceSkip ? 300 : 200);
             return GetPostDialogueState();
         }
 
@@ -810,13 +742,7 @@ namespace AethermancerHarness
                 return JsonConfig.Error("Merchant menu not open");
 
             UIController.Instance.SetMerchantMenuVisibility(visible: false);
-
-            var startTime = DateTime.Now;
-            while (IsMerchantMenuOpen() && !TimedOut(startTime, 2000))
-            {
-                System.Threading.Thread.Sleep(50);
-            }
-
+            WaitUntil(() => !IsMerchantMenuOpen(), 2000, 50);
             System.Threading.Thread.Sleep(200);
 
             return JsonConfig.Serialize(new
@@ -857,30 +783,13 @@ namespace AethermancerHarness
 
             if (shopItem.ItemType == ShopItemType.Exp)
             {
-                var startTime = DateTime.Now;
-
-                while (!TimedOut(startTime, 5000))
-                {
-                    System.Threading.Thread.Sleep(100);
-                    if (IsMerchantMenuOpen())
-                    {
-                        break;
-                    }
-                }
+                WaitUntil(IsMerchantMenuOpen, 5000);
             }
 
             if (shopItem.ItemType == ShopItemType.Equipment)
             {
-                var startTime = DateTime.Now;
-
-                while (!TimedOut(startTime, 3000))
-                {
-                    System.Threading.Thread.Sleep(100);
-                    if (StateSerializer.IsInEquipmentSelection())
-                    {
-                        return StateSerializer.GetEquipmentSelectionStateJson();
-                    }
-                }
+                if (WaitUntil(StateSerializer.IsInEquipmentSelection, 3000))
+                    return StateSerializer.GetEquipmentSelectionStateJson();
             }
 
             System.Threading.Thread.Sleep(200);
@@ -934,30 +843,23 @@ namespace AethermancerHarness
             {
                 var popup = PopupController.Instance;
                 if (popup.IsOpen)
-                {                    popup.ConfirmMenu.SelectByIndex(0);
+                {
+                    popup.ConfirmMenu.SelectByIndex(0);
                     InputConfirmMethod.Invoke(popup.ConfirmMenu, null);
                 }
             });
 
-            var startTime = DateTime.Now;
-            while (!TimedOut(startTime, 5000))
+            if (!WaitUntil(StateSerializer.IsInMonsterSelection, 5000))
+                return JsonConfig.Error("Timeout waiting for monster selection after difficulty selection");
+
+            return JsonConfig.Serialize(new
             {
-                System.Threading.Thread.Sleep(100);
-
-                if (StateSerializer.IsInMonsterSelection())
-                {
-                    return JsonConfig.Serialize(new
-                    {
-                        success = true,
-                        action = "difficulty_selected",
-                        difficulty = targetDifficulty,
-                        phase = GamePhase.MonsterSelection,
-                        state = JObject.Parse(StateSerializer.GetMonsterSelectionStateJson())
-                    });
-                }
-            }
-
-            return JsonConfig.Error("Timeout waiting for monster selection after difficulty selection");
+                success = true,
+                action = "difficulty_selected",
+                difficulty = targetDifficulty,
+                phase = GamePhase.MonsterSelection,
+                state = JObject.Parse(StateSerializer.GetMonsterSelectionStateJson())
+            });
         }
 
         // =====================================================
@@ -974,22 +876,15 @@ namespace AethermancerHarness
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
-                // Navigate to the correct selection (0 = left, 1 = right)
                 if (choiceIndex == 0)
                     menu.OnGoLeft();
                 else
                     menu.OnGoRight();
 
-                // Confirm the selection
                 menu.OnConfirm();
             });
 
-            var startTime = DateTime.Now;
-            while (StateSerializer.IsInAetherSpringMenu() && !TimedOut(startTime, 3000))
-            {
-                System.Threading.Thread.Sleep(50);
-            }
-
+            WaitUntil(() => !StateSerializer.IsInAetherSpringMenu(), 3000, 50);
             System.Threading.Thread.Sleep(300);
 
             return JsonConfig.Serialize(new
