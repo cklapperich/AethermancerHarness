@@ -225,6 +225,14 @@ namespace AethermancerHarness
                         }
                         break;
 
+                    case "/debug/dialogue":
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = ActionHandler.DebugDialogueState());
+                            responseBody = result;
+                        }
+                        break;
+
                     default:
                         responseBody = JsonConfig.Serialize(new
                         {
@@ -234,7 +242,7 @@ namespace AethermancerHarness
                                 "/health", "/ready", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
                                 "/exploration/interact", "/exploration/loot-all", "/npc/interact",
-                                "/choice", "/debug/interactables"
+                                "/choice", "/debug/interactables", "/debug/dialogue"
                             }
                         });
                         statusCode = 404;

@@ -232,15 +232,6 @@ namespace AethermancerHarness
                         if (IsDialogueOpen())
                         {
                             System.Threading.Thread.Sleep(200);
-                            // Auto-progress dialogue to first decision point
-                            AutoProgressDialogue();
-
-                            if (StateSerializer.IsInSkillSelection())
-                                return JsonConfig.Serialize(new { success = true, phase = GamePhase.SkillSelection, transitionedFrom = "dialogue", name = interactableName });
-
-                            if (!IsDialogueOpen())
-                                return JsonConfig.Serialize(new { success = true, phase = GamePhase.Exploration, dialogueComplete = true, name = interactableName });
-
                             return StateSerializer.GetDialogueStateJson();
                         }
                         break;

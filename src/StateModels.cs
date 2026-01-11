@@ -85,8 +85,6 @@ namespace AethermancerHarness
         public string Description { get; set; }
         public AetherValues Cost { get; set; }
         public bool CanUse { get; set; }
-        public string Category { get; set; }
-        public List<string> SubTypes { get; set; }
     }
 
     public class ActionInfo
@@ -96,8 +94,6 @@ namespace AethermancerHarness
         public AetherValues Cost { get; set; }
         public string TargetType { get; set; }
         public List<string> Elements { get; set; }
-        public string Category { get; set; }
-        public List<string> SubTypes { get; set; }
     }
 
     public class TargetInfo
@@ -110,8 +106,6 @@ namespace AethermancerHarness
         public string Name { get; set; }
         public AetherValues Cost { get; set; }
         public List<TargetInfo> Targets { get; set; }
-        public string Category { get; set; }
-        public List<string> SubTypes { get; set; }
     }
 
     public class PoiseInfo
@@ -152,12 +146,10 @@ namespace AethermancerHarness
         public int Level { get; set; }
         public int Hp { get; set; }
         public int MaxHp { get; set; }
-        public int Shield { get; set; }
-        public int CurrentExp { get; set; }
+        public int? Shield { get; set; }
         public int ExpNeeded { get; set; }
-        public int WorthinessLevel { get; set; }
-        public int CurrentWorthiness { get; set; }
-        public int WorthinessNeeded { get; set; }
+        public List<string> Elements { get; set; }
+        public List<string> Types { get; set; }
         public List<ActionInfo> Actions { get; set; }
         public List<TraitInfo> Traits { get; set; }
     }
@@ -170,6 +162,8 @@ namespace AethermancerHarness
         public int Shield { get; set; }
         public int Corruption { get; set; }
         public bool IsDead { get; set; }
+        public List<string> Elements { get; set; }
+        public List<string> Types { get; set; }
         public List<BuffInfo> Buffs { get; set; }
         public List<BuffInfo> Debuffs { get; set; }
         public List<TraitInfo> Traits { get; set; }
@@ -301,8 +295,6 @@ namespace AethermancerHarness
         public List<string> Elements { get; set; }
         public string TargetType { get; set; }
         public bool IsTrait { get; set; }
-        public string Category { get; set; }
-        public List<string> SubTypes { get; set; }
         public bool? IsAura { get; set; }
         public string Error { get; set; }
     }

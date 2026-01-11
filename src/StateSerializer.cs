@@ -604,37 +604,6 @@ namespace AethermancerHarness
             return option.GetType().Name.ToLower();
         }
 
-        private static string GetActionCategory(SkillInstance skill)
-        {
-            if (skill?.Action == null) return "unknown";
-
-            var action = skill.Action;
-            bool isDamaging = action.IsActionSubType(EActionSubType.DamagingAction);
-
-            if (isDamaging)
-                return "attack";
-
-            bool isFreeAction = skill.IsFreeAction();
-            return isFreeAction ? "support" : "dedicated_support";
-        }
-
-        private static List<string> GetActionSubTypes(SkillInstance skill)
-        {
-            var subTypes = new List<string>();
-            if (skill?.Action == null) return subTypes;
-
-            var action = skill.Action;
-
-            if (action.IsActionSubType(EActionSubType.HealingAction)) subTypes.Add("healing");
-            if (action.IsActionSubType(EActionSubType.ShieldingAction)) subTypes.Add("shielding");
-            if (action.IsActionSubType(EActionSubType.BuffAction)) subTypes.Add("buff");
-            if (action.IsActionSubType(EActionSubType.DebuffAction)) subTypes.Add("debuff");
-            if (action.IsActionSubType(EActionSubType.SummonAction)) subTypes.Add("summon");
-            if (action.IsActionSubType(EActionSubType.DamagingAction)) subTypes.Add("damaging");
-
-            return subTypes;
-        }
-
         private static EquipmentInfo BuildEquipmentInfo(EquipmentInstance equipment)
         {
             if (equipment == null) return null;
@@ -765,8 +734,6 @@ namespace AethermancerHarness
                 choice.Elements = skill.Action.Elements.ConvertAll(e => e.ToString());
                 choice.TargetType = skill.Action.TargetType.ToString();
                 choice.IsTrait = false;
-                choice.Category = GetActionCategory(skill);
-                choice.SubTypes = GetActionSubTypes(skill);
             }
             else
             {
@@ -800,9 +767,7 @@ namespace AethermancerHarness
                     {
                         Name = StripMarkup(skill.Action?.Name ?? ""),
                         Cost = BuildAetherValues(skill.GetActionCost()),
-                        Targets = BuildValidTargets(current, skill),
-                        Category = GetActionCategory(skill),
-                        SubTypes = GetActionSubTypes(skill)
+                        Targets = BuildValidTargets(current, skill)
                     });
                 }
                 skillIdx++;
@@ -1017,6 +982,20 @@ namespace AethermancerHarness
 
         private static CombatMonster BuildCombatMonster(Monster m, int index, bool isPlayer, string displayName = null)
         {
+            var elements = (m.SkillManager?.GetElements() ?? new List<EElement>()).ConvertAll(e => e.ToString());
+
+            var types = new List<string>();
+            var monsterTypes = m.SkillManager?.GetMonsterTypes();
+            if (monsterTypes != null)
+            {
+                foreach (var typeObj in monsterTypes)
+                {
+                    var monsterType = typeObj.GetComponent<MonsterType>();
+                    if (monsterType != null)
+                        types.Add(monsterType.Type.ToString());
+                }
+            }
+
             var monster = new CombatMonster
             {
                 Name = displayName ?? StripMarkup(m.Name),
@@ -1025,6 +1004,8 @@ namespace AethermancerHarness
                 Shield = m.Shield,
                 Corruption = m.Stats?.CurrentCorruption ?? 0,
                 IsDead = m.State?.IsDead ?? false,
+                Elements = elements,
+                Types = types,
                 Buffs = BuildBuffsList(m, EBuffType.Buff),
                 Debuffs = BuildBuffsList(m, EBuffType.Debuff),
                 Traits = BuildTraitsList(m)
@@ -1041,9 +1022,7 @@ namespace AethermancerHarness
                         Name = StripMarkup(skill.Action?.Name ?? ""),
                         Description = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                         Cost = BuildAetherValues(skill.GetActionCost()),
-                        CanUse = skill.Action?.CanUseAction(skill) ?? false,
-                        Category = GetActionCategory(skill),
-                        SubTypes = GetActionSubTypes(skill)
+                        CanUse = skill.Action?.CanUseAction(skill) ?? false
                     });
                     skillIdx++;
                 }
@@ -1461,9 +1440,7 @@ namespace AethermancerHarness
                     Description = StripMarkup(skill.Action?.GetDescription(skill) ?? ""),
                     Cost = BuildAetherValues(skill.GetActionCost()),
                     TargetType = skill.Action?.TargetType.ToString() ?? "Unknown",
-                    Elements = elements,
-                    Category = GetActionCategory(skill),
-                    SubTypes = GetActionSubTypes(skill)
+                    Elements = elements
                 });
                 actionIdx++;
             }
@@ -1472,18 +1449,29 @@ namespace AethermancerHarness
 
         private static MonsterDetails BuildMonsterDetails(Monster m, int index)
         {
+            var elements = (m.SkillManager?.GetElements() ?? new List<EElement>()).ConvertAll(e => e.ToString());
+
+            var types = new List<string>();
+            var monsterTypes = m.SkillManager?.GetMonsterTypes();
+            if (monsterTypes != null)
+            {
+                foreach (var typeObj in monsterTypes)
+                {
+                    var monsterType = typeObj.GetComponent<MonsterType>();
+                    if (monsterType != null)
+                        types.Add(monsterType.Type.ToString());
+                }
+            }
+
             return new MonsterDetails
             {
                 Name = StripMarkup(m.Name),
                 Level = m.Level,
                 Hp = m.CurrentHealth,
                 MaxHp = m.Stats?.MaxHealth?.ValueInt ?? 0,
-                Shield = m.Shield,
-                CurrentExp = m.LevelManager?.CurrentExp ?? 0,
                 ExpNeeded = m.LevelManager?.ExpNeededTotal ?? 0,
-                WorthinessLevel = m.Worthiness?.WorthinessLevel ?? 0,
-                CurrentWorthiness = m.Worthiness?.CurrentWorthiness ?? 0,
-                WorthinessNeeded = m.Worthiness?.CurrentRequiredWorthinessTotal ?? 0,
+                Elements = elements,
+                Types = types,
                 Actions = BuildActionsList(m),
                 Traits = BuildTraitsList(m)
             };

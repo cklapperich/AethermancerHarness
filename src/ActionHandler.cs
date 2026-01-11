@@ -143,12 +143,17 @@ namespace AethermancerHarness
 
         /// <summary>
         /// Resolves a choice name to an index by parsing the current game state.
+        /// Supports both numeric indices (e.g., "0", "1") and text matching.
         /// Returns (index, error) where error is null on success.
         /// </summary>
         public static (int index, string error) ResolveChoiceName(string choiceName)
         {
             if (string.IsNullOrEmpty(choiceName))
                 return (-1, "choiceName is required");
+
+            // If it's a numeric index, return it directly
+            if (int.TryParse(choiceName, out int directIndex))
+                return (directIndex, null);
 
             // Skill selection
             if (StateSerializer.IsInSkillSelection())
