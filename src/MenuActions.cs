@@ -212,6 +212,7 @@ namespace AethermancerHarness
             return false;
         }
 
+        // TODO: REMOVE SOMEHOW. This is only called in a single place. it also sleeps on the main thread which is a sin.
         /// <summary>
         /// Wait until a condition is met or timeout, checking on main thread. Returns true if condition was met.
         /// </summary>
