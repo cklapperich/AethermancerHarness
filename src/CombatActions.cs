@@ -1,101 +1,32 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 
 namespace AethermancerHarness
 {
     /// <summary>
-    /// Combat-related actions: input readiness, action execution, previews, enemy actions.
+    /// Combat-related actions: action execution, previews, enemy actions.
+    /// Input readiness is now handled by the unified system in ReadinessActions.cs.
     /// </summary>
     public static partial class ActionHandler
     {
         // =====================================================
-        // COMBAT INPUT READINESS
+        // NAME-BASED RESOLUTION (Identity-based)
         // =====================================================
 
-        public static bool IsReadyForInput()
+        private static Func<Monster, string> MonsterNameFunc = m => StateSerializer.StripMarkup(m.Name);
+        private static Func<Monster, string> AliveMonsterNameFunc = m => (m.State?.IsDead ?? false) ? null : StateSerializer.StripMarkup(m.Name);
+
+        private static (Monster actor, string error) ResolveActorByName(string name, CombatController cc)
         {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return false;
-
-            var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
-            if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return false;
-
-            var cc = CombatController.Instance;
-            if (cc == null)
-                return false;
-
-            if (cc.CurrentMonster == null || !cc.CurrentMonster.BelongsToPlayer)
-                return false;
-
-            if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return false;
-
-            if (cc.CurrentMonster.State?.ActionInstance != null)
-                return false;
-
-            return true;
-        }
-
-        public static string GetInputReadyStatus()
-        {
-            if (!(GameStateManager.Instance?.IsCombat ?? false))
-                return InputReadyStatus.NotInCombat.ToString();
-
-            var currentState = CombatStateManager.Instance?.State?.CurrentState?.ID;
-            if (currentState >= CombatStateManager.EState.EndCombatTriggers)
-                return $"{InputReadyStatus.CombatEnded.ToString()}:{currentState}";
-
-            var cc = CombatController.Instance;
-            if (cc == null)
-                return InputReadyStatus.NoCombatController.ToString();
-
-            if (cc.CurrentMonster == null)
-                return InputReadyStatus.NoCurrentMonster.ToString();
-            if (!cc.CurrentMonster.BelongsToPlayer)
-                return $"{InputReadyStatus.EnemyTurn.ToString()}:{cc.CurrentMonster.Name}";
-            if (CombatTimeline.Instance?.TriggerStack?.Count > 0)
-                return $"{InputReadyStatus.TriggersPending.ToString()}:{CombatTimeline.Instance.TriggerStack.Count}";
-            if (cc.CurrentMonster.State?.ActionInstance != null)
-                return $"{InputReadyStatus.ActionExecuting.ToString()}:{cc.CurrentMonster.State.ActionInstance.Action?.Name}";
-
-            return InputReadyStatus.Ready.ToString();
-        }
-
-        public static bool WaitForReady(int timeoutMs = 30000)
-        {
-            var startTime = DateTime.Now;
-            while ((DateTime.Now - startTime).TotalMilliseconds < timeoutMs)
+            var actor = StateSerializer.FindByDisplayName(name, cc.PlayerMonsters, MonsterNameFunc);
+            if (actor == null)
             {
-                // Check readiness on main thread, but sleep on calling thread
-                bool ready = false;
-                if (Plugin.IsMainThread)
-                {
-                    ready = IsReadyForInput();
-                }
-                else
-                {
-                    Plugin.RunOnMainThreadAndWait(() => ready = IsReadyForInput());
-                }
-
-                if (ready)
-                    return true;
-
-                // Sleep on calling thread (HTTP thread) - this doesn't block Unity
-                System.Threading.Thread.Sleep(50);
+                var available = StateSerializer.GetAllDisplayNames(cc.PlayerMonsters, MonsterNameFunc);
+                return (null, $"No ally named '{name}'. Available: {string.Join(", ", available)}");
             }
-            return false;
-        }
-
-        // =====================================================
-        // NAME-BASED RESOLUTION
-        // =====================================================
-
-        private static (int index, string error) ResolveActorByName(string name, CombatController cc)
-        {
-            var displayNames = StateSerializer.GetCombatMonsterNames(cc.PlayerMonsters);
-            return StateSerializer.ResolveNameToIndex(name, displayNames, "ally");
+            return (actor, null);
         }
 
         private static (int index, string error) ResolveSkillByName(string name, Monster actor)
@@ -106,25 +37,37 @@ namespace AethermancerHarness
             return (-1, $"No skill named '{name}' for {actor.Name}");
         }
 
-        private static (int index, string error) ResolveTargetByName(string name, ETargetType targetType, CombatController cc)
+        private static (Monster target, string error) ResolveTargetByName(string name, ETargetType targetType, CombatController cc, Monster actor)
         {
             switch (targetType)
             {
                 case ETargetType.SingleEnemy:
                 case ETargetType.AllEnemies:
-                    var enemyNames = StateSerializer.GetCombatMonsterNames(cc.Enemies, onlyAlive: true);
-                    return StateSerializer.ResolveNameToIndex(name, enemyNames, "enemy");
+                    var aliveEnemies = cc.Enemies.Where(e => !(e.State?.IsDead ?? false)).ToList();
+                    var enemy = StateSerializer.FindByDisplayName(name, aliveEnemies, MonsterNameFunc);
+                    if (enemy == null)
+                    {
+                        var available = StateSerializer.GetAllDisplayNames(aliveEnemies, MonsterNameFunc);
+                        return (null, $"No enemy named '{name}'. Available: {string.Join(", ", available)}");
+                    }
+                    return (enemy, null);
 
                 case ETargetType.SingleAlly:
                 case ETargetType.AllAllies:
-                    var allyNames = StateSerializer.GetCombatMonsterNames(cc.PlayerMonsters, onlyAlive: true);
-                    return StateSerializer.ResolveNameToIndex(name, allyNames, "ally");
+                    var aliveAllies = cc.PlayerMonsters.Where(m => !(m.State?.IsDead ?? false)).ToList();
+                    var ally = StateSerializer.FindByDisplayName(name, aliveAllies, MonsterNameFunc);
+                    if (ally == null)
+                    {
+                        var available = StateSerializer.GetAllDisplayNames(aliveAllies, MonsterNameFunc);
+                        return (null, $"No ally named '{name}'. Available: {string.Join(", ", available)}");
+                    }
+                    return (ally, null);
 
                 case ETargetType.SelfOrOwner:
-                    return (-1, null);
+                    return (actor, null);
 
                 default:
-                    return (-1, $"Cannot resolve target name for target type {targetType}");
+                    return (null, $"Cannot resolve target name for target type {targetType}");
             }
         }
 
@@ -132,23 +75,17 @@ namespace AethermancerHarness
         // TARGET RESOLUTION
         // =====================================================
 
-        private static (ITargetable target, string error) ResolveTarget(
-            ETargetType targetType, int targetIndex, CombatController cc, Monster actor)
+        private static (ITargetable target, string error) ResolveTargetable(
+            ETargetType targetType, Monster resolvedTarget, CombatController cc, Monster actor)
         {
             switch (targetType)
             {
                 case ETargetType.SingleEnemy:
-                    if (targetIndex < 0 || targetIndex >= cc.Enemies.Count)
-                        return (null, $"Invalid target index: {targetIndex}");
-                    return (cc.Enemies[targetIndex], null);
+                case ETargetType.SingleAlly:
+                    return (resolvedTarget, null);
 
                 case ETargetType.AllEnemies:
                     return (cc.TargetEnemies, null);
-
-                case ETargetType.SingleAlly:
-                    if (targetIndex < 0 || targetIndex >= cc.PlayerMonsters.Count)
-                        return (null, $"Invalid ally target index: {targetIndex}");
-                    return (cc.PlayerMonsters[targetIndex], null);
 
                 case ETargetType.AllAllies:
                     return (cc.TargetPlayerMonsters, null);
@@ -181,23 +118,22 @@ namespace AethermancerHarness
             // Phase 1: Validate and start action (main thread)
             Plugin.RunOnMainThreadAndWait(() =>
             {
-                if (!IsReadyForInput())
+                var readiness = GetReadinessState();
+                if (!readiness.Ready)
                 {
-                    error = JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                    error = JsonConfig.Error("Game not ready for input", new { status = readiness.BlockReason, phase = readiness.Phase });
                     return;
                 }
 
                 var cc = CombatController.Instance;
 
-                // Resolve actor by name
-                var (actorIndex, actorError) = ResolveActorByName(actorName, cc);
+                // Resolve actor by name (now returns Monster directly)
+                var (actor, actorError) = ResolveActorByName(actorName, cc);
                 if (actorError != null)
                 {
                     error = JsonConfig.Error(actorError);
                     return;
                 }
-
-                var actor = cc.PlayerMonsters[actorIndex];
 
                 // Resolve skill by name
                 var (skillIndex, skillError) = ResolveSkillByName(skillName, actor);
@@ -215,15 +151,15 @@ namespace AethermancerHarness
                     return;
                 }
 
-                // Resolve target by name
-                var (targetIndex, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc);
+                // Resolve target by name (now returns Monster directly)
+                var (resolvedMonster, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc, actor);
                 if (targetError != null)
                 {
                     error = JsonConfig.Error(targetError);
                     return;
                 }
 
-                var (target, resolveError) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
+                var (target, resolveError) = ResolveTargetable(skill.Action.TargetType, resolvedMonster, cc, actor);
                 if (target == null)
                 {
                     error = JsonConfig.Error(resolveError);
@@ -243,8 +179,8 @@ namespace AethermancerHarness
             if (error != null)
                 return error;
 
-            // Phase 2: Wait for ready (HTTP thread with main thread checks)
-            bool ready = WaitForReady(30000);
+            // Phase 2: Wait until ready or combat ends
+            WaitUntilReady(30000);
 
             // Phase 3: Check combat result and capture state (main thread)
             string result = null;
@@ -257,8 +193,7 @@ namespace AethermancerHarness
 
                 if (!combatWon)
                 {
-                    // Combat not won - build response immediately
-                    result = BuildCombatActionResponse(actionName, resolvedActorName, resolvedTargetName, ready, false, snapshot);
+                    result = BuildCombatActionResponse(actionName, resolvedActorName, resolvedTargetName, false, snapshot);
                 }
             });
 
@@ -269,6 +204,9 @@ namespace AethermancerHarness
             Plugin.Log.LogInfo("Combat won, starting post-combat auto-advance");
             return WaitForPostCombatComplete();
         }
+
+        private static Func<ConsumableInstance, string> ConsumableNameFunc = c =>
+            StateSerializer.StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown");
 
         public static string ExecuteConsumableAction(string consumableName, string targetName)
         {
@@ -283,9 +221,10 @@ namespace AethermancerHarness
             // Phase 1: Validate and start action (main thread)
             Plugin.RunOnMainThreadAndWait(() =>
             {
-                if (!IsReadyForInput())
+                var readiness = GetReadinessState();
+                if (!readiness.Ready)
                 {
-                    error = JsonConfig.Error("Game not ready for input", new { status = GetInputReadyStatus() });
+                    error = JsonConfig.Error("Game not ready for input", new { status = readiness.BlockReason, phase = readiness.Phase });
                     return;
                 }
 
@@ -298,21 +237,15 @@ namespace AethermancerHarness
                     return;
                 }
 
-                // Build deduplicated consumable names
-                var consumableNames = new System.Collections.Generic.List<string>();
-                foreach (var c in consumables)
-                    consumableNames.Add(StateSerializer.StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
-
-                var displayNames = StateSerializer.DeduplicateNames(consumableNames);
-                var (consumableIndex, consumableError) = StateSerializer.ResolveNameToIndex(consumableName, displayNames, "consumable");
-
-                if (consumableIndex < 0)
+                // Find consumable by name using identity-based lookup
+                var consumable = StateSerializer.FindByDisplayName(consumableName, consumables, ConsumableNameFunc);
+                if (consumable == null)
                 {
-                    error = JsonConfig.Error(consumableError);
+                    var available = StateSerializer.GetAllDisplayNames(consumables, ConsumableNameFunc);
+                    error = JsonConfig.Error($"No consumable named '{consumableName}'. Available: {string.Join(", ", available)}");
                     return;
                 }
 
-                var consumable = consumables[consumableIndex];
                 var currentMonster = cc.CurrentMonster;
 
                 if (currentMonster == null)
@@ -329,14 +262,14 @@ namespace AethermancerHarness
                     return;
                 }
 
-                var (targetIndex, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc);
+                var (resolvedMonster, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc, currentMonster);
                 if (targetError != null)
                 {
                     error = JsonConfig.Error(targetError);
                     return;
                 }
 
-                var (target, resolveError) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
+                var (target, resolveError) = ResolveTargetable(consumable.Action.TargetType, resolvedMonster, cc, currentMonster);
                 if (target == null)
                 {
                     error = JsonConfig.Error(resolveError);
@@ -356,8 +289,8 @@ namespace AethermancerHarness
             if (error != null)
                 return error;
 
-            // Phase 2: Wait for ready (HTTP thread with main thread checks)
-            bool ready = WaitForReady(30000);
+            // Phase 2: Wait until ready or combat ends
+            WaitUntilReady(30000);
 
             // Phase 3: Check combat result and capture state (main thread)
             string result = null;
@@ -370,8 +303,7 @@ namespace AethermancerHarness
 
                 if (!combatWon)
                 {
-                    // Combat not won - build response immediately
-                    result = BuildCombatActionResponse(actionName, actorName, resolvedTargetName, ready, true, snapshot);
+                    result = BuildCombatActionResponse(actionName, actorName, resolvedTargetName, true, snapshot);
                 }
             });
 
@@ -387,7 +319,7 @@ namespace AethermancerHarness
         /// Build the response JSON after a combat action completes.
         /// MUST be called on main thread. Does NOT handle combat won case.
         /// </summary>
-        private static string BuildCombatActionResponse(string actionName, string actorName, string targetName, bool ready, bool isConsumable, CombatStateSnapshot snapshot)
+        private static string BuildCombatActionResponse(string actionName, string actorName, string targetName, bool isConsumable, CombatStateSnapshot snapshot)
         {
             var stateManager = CombatStateManager.Instance;
             bool combatEnded = stateManager?.State?.CurrentState?.ID >= CombatStateManager.EState.EndCombatTriggers;
@@ -417,7 +349,6 @@ namespace AethermancerHarness
                 ["action"] = actionName,
                 ["actor"] = actorName,
                 ["target"] = targetName,
-                ["waitedForReady"] = ready,
                 ["state"] = useCondensed
                     ? JObject.Parse(StateSerializer.BuildCondensedCombatStateJson(snapshot))
                     : JObject.Parse(StateSerializer.ToJson())
@@ -443,12 +374,10 @@ namespace AethermancerHarness
 
             var cc = CombatController.Instance;
 
-            // Resolve actor by name
-            var (actorIndex, actorError) = ResolveActorByName(actorName, cc);
+            // Resolve actor by name (now returns Monster directly)
+            var (actor, actorError) = ResolveActorByName(actorName, cc);
             if (actorError != null)
                 return JsonConfig.Error(actorError);
-
-            var actor = cc.PlayerMonsters[actorIndex];
 
             // Resolve skill by name
             var (skillIndex, skillError) = ResolveSkillByName(skillName, actor);
@@ -460,12 +389,12 @@ namespace AethermancerHarness
             if (!skill.Action.CanUseAction(skill))
                 return JsonConfig.Error($"Skill cannot be used: {skill.Action.Name}");
 
-            // Resolve target by name
-            var (targetIndex, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc);
+            // Resolve target by name (now returns Monster directly)
+            var (resolvedMonster, targetError) = ResolveTargetByName(targetName, skill.Action.TargetType, cc, actor);
             if (targetError != null)
                 return JsonConfig.Error(targetError);
 
-            var (target, error) = ResolveTarget(skill.Action.TargetType, targetIndex, cc, actor);
+            var (target, error) = ResolveTargetable(skill.Action.TargetType, resolvedMonster, cc, actor);
             if (target == null)
                 return JsonConfig.Error(error);
 
@@ -484,18 +413,14 @@ namespace AethermancerHarness
             if (consumables == null)
                 return JsonConfig.Error("No consumables available");
 
-            // Build deduplicated consumable names
-            var consumableNames = new System.Collections.Generic.List<string>();
-            foreach (var c in consumables)
-                consumableNames.Add(StateSerializer.StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
+            // Find consumable by name using identity-based lookup
+            var consumable = StateSerializer.FindByDisplayName(consumableName, consumables, ConsumableNameFunc);
+            if (consumable == null)
+            {
+                var available = StateSerializer.GetAllDisplayNames(consumables, ConsumableNameFunc);
+                return JsonConfig.Error($"No consumable named '{consumableName}'. Available: {string.Join(", ", available)}");
+            }
 
-            var displayNames = StateSerializer.DeduplicateNames(consumableNames);
-            var (consumableIndex, consumableError) = StateSerializer.ResolveNameToIndex(consumableName, displayNames, "consumable");
-
-            if (consumableIndex < 0)
-                return JsonConfig.Error(consumableError);
-
-            var consumable = consumables[consumableIndex];
             var currentMonster = cc.CurrentMonster;
 
             if (currentMonster == null)
@@ -506,11 +431,11 @@ namespace AethermancerHarness
             if (!consumable.Action.CanUseAction(consumable))
                 return JsonConfig.Error($"Consumable cannot be used: {consumable.Consumable?.Name}");
 
-            var (targetIndex, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc);
+            var (resolvedMonster, targetError) = ResolveTargetByName(targetName, consumable.Action.TargetType, cc, currentMonster);
             if (targetError != null)
                 return JsonConfig.Error(targetError);
 
-            var (target, error) = ResolveTarget(consumable.Action.TargetType, targetIndex, cc, currentMonster);
+            var (target, error) = ResolveTargetable(consumable.Action.TargetType, resolvedMonster, cc, currentMonster);
             if (target == null)
                 return JsonConfig.Error(error);
 

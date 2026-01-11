@@ -15,6 +15,9 @@ namespace AethermancerHarness
         internal static ManualLogSource Log;
         private static Harmony _harmony;
 
+        // Singleton instance for accessing MonoBehaviour methods (e.g., StartCoroutine)
+        public static Plugin Instance { get; private set; }
+
         private bool _hasLoggedCombatAccess = false;
         private bool _hasLoggedGameReady = false;
         private HarnessServer _server;
@@ -94,6 +97,7 @@ namespace AethermancerHarness
 
         private void Awake()
         {
+            Instance = this;
             Log = Logger;
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
             Logger.LogInfo($"AethermancerHarness v{PluginInfo.PLUGIN_VERSION} loaded! (Main thread ID: {_mainThreadId})");

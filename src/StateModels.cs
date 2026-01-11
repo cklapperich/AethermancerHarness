@@ -309,6 +309,7 @@ namespace AethermancerHarness
 
     public class DialogueChoice
     {
+        public int Index { get; set; }
         public string Text { get; set; }
         public string Type { get; set; }
         public EquipmentInfo Equipment { get; set; }
@@ -387,8 +388,6 @@ namespace AethermancerHarness
     public class CombatState : BaseState
     {
         public int Round { get; set; }
-        public bool ReadyForInput { get; set; }
-        public string InputStatus { get; set; }
         public int CurrentActorIndex { get; set; }
         public AetherValues PlayerAether { get; set; }
         public AetherValues EnemyAether { get; set; }
@@ -405,7 +404,6 @@ namespace AethermancerHarness
         public AetherValues PlayerAether { get; set; }
         public AetherValues EnemyAether { get; set; }
         public int CurrentActorIndex { get; set; }
-        public bool ReadyForInput { get; set; }
         public HpChanges HpChanges { get; set; }
         public BuffChanges BuffChanges { get; set; }
         public List<MonsterCanAct> MonstersCanAct { get; set; }
@@ -482,5 +480,51 @@ namespace AethermancerHarness
         public List<ValidAction> Actions { get; set; }
         public string Error { get; set; }
         public string WaitingFor { get; set; }
+    }
+
+    // =====================================================
+    // READINESS STATE - Unified input readiness detection
+    // =====================================================
+
+    public class ReadinessState
+    {
+        public bool Ready { get; set; }
+        public string Phase { get; set; }
+        public string BlockReason { get; set; }
+        public ReadinessDetails Details { get; set; }
+    }
+
+    public class ReadinessDetails
+    {
+        // Global state
+        public string GameState { get; set; }
+        public bool IsPriorityLayerOpen { get; set; }
+        public bool IsPaused { get; set; }
+
+        // Combat-specific (only populated when in combat)
+        public string CombatState { get; set; }
+        public bool? IsPlayerTurn { get; set; }
+        public int? PendingTriggers { get; set; }
+        public bool? IsMonsterAnimating { get; set; }
+        public string ExecutingAction { get; set; }
+        public string CurrentMonster { get; set; }
+
+        // Exploration-specific (only populated when exploring)
+        public bool? CanMove { get; set; }
+        public bool? IsTeleporting { get; set; }
+        public bool? IsDashing { get; set; }
+        public bool? IsFalling { get; set; }
+        public bool? InCutscene { get; set; }
+
+        // Dialogue-specific
+        public bool? DialogueOpen { get; set; }
+        public bool? DialogueInputAllowed { get; set; }
+
+        // Menu-specific
+        public string ActiveMenu { get; set; }
+        public bool? MenuLocked { get; set; }
+
+        // Popup
+        public bool? PopupOpen { get; set; }
     }
 }

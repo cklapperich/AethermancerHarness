@@ -86,6 +86,14 @@ namespace AethermancerHarness
                         }
                         break;
 
+                    case "/ready":
+                        {
+                            string result = null;
+                            Plugin.RunOnMainThreadAndWait(() => result = HandleReady());
+                            responseBody = result;
+                        }
+                        break;
+
                     case "/state":
                         var format = request.QueryString["format"];
                         if (format == "text")
@@ -223,7 +231,7 @@ namespace AethermancerHarness
                             error = "Not found",
                             endpoints = new[]
                             {
-                                "/health", "/state", "/actions", "/combat/action", "/combat/preview",
+                                "/health", "/ready", "/state", "/actions", "/combat/action", "/combat/preview",
                                 "/combat/enemy-actions", "/combat/start", "/exploration/teleport",
                                 "/exploration/interact", "/exploration/loot-all", "/npc/interact",
                                 "/choice", "/debug/interactables"
@@ -269,10 +277,7 @@ namespace AethermancerHarness
             return JsonConfig.Serialize(new
             {
                 status = "ok",
-                gameReady = GameController.Instance != null,
-                inCombat = GameStateManager.Instance?.IsCombat ?? false,
-                readyForInput = ActionHandler.IsReadyForInput(),
-                inputStatus = ActionHandler.GetInputReadyStatus()
+                gameReady = GameController.Instance != null
             });
         }
 
@@ -341,7 +346,7 @@ namespace AethermancerHarness
             var x = JsonConfig.Value(json, "x", 0f);
             var y = JsonConfig.Value(json, "y", 0f);
             var z = JsonConfig.Value(json, "z", 0f);
-            return ActionHandler.ExecuteTeleport(x, y, z);
+            return TeleportActions.ExecuteTeleport(x, y, z);
         }
 
         private string HandleCombatStart(string body)
@@ -349,14 +354,11 @@ namespace AethermancerHarness
             var json = JsonConfig.Parse(body);
             var monsterGroupName = JsonConfig.Value(json, "monsterGroupName", (string)null);
             var monsterName = JsonConfig.Value(json, "monsterName", (string)null);
-            var useVoidBlitz = JsonConfig.Value(json, "voidBlitz", false);
 
             if (string.IsNullOrEmpty(monsterGroupName))
                 return JsonConfig.Error("monsterGroupName is required");
 
-            if (useVoidBlitz)
-                return ActionHandler.ExecuteVoidBlitz(monsterGroupName, monsterName);
-            return ActionHandler.ExecuteStartCombat(monsterGroupName);
+            return ActionHandler.ExecuteVoidBlitz(monsterGroupName, monsterName);
         }
 
         private string HandleNpcInteract(string body)
@@ -377,15 +379,22 @@ namespace AethermancerHarness
                 return ActionHandler.ExecuteInteract();
 
             var json = JsonConfig.Parse(body);
-            var type = JsonConfig.Value(json, "type", (string)null);
             var name = JsonConfig.Value(json, "name", (string)null);
 
-            // If no type specified, use parameterless interact
-            if (string.IsNullOrWhiteSpace(type))
-                return ActionHandler.ExecuteInteract();
+            // If name provided, use unified TeleportAndInteract
+            if (!string.IsNullOrWhiteSpace(name))
+                return ActionHandler.TeleportAndInteract(name);
 
-            // Otherwise, dispatch to the typed interact handler with name
-            return ActionHandler.ExecuteInteract(type, name);
+            // Legacy: type parameter (ignored, name is required now)
+            var type = JsonConfig.Value(json, "type", (string)null);
+            if (!string.IsNullOrWhiteSpace(type))
+            {
+                // Type without name - backwards compatible fallback
+                return ActionHandler.ExecuteInteract();
+            }
+
+            // No params - use parameterless interact
+            return ActionHandler.ExecuteInteract();
         }
 
         private string HandleChoice(string body)
@@ -398,6 +407,12 @@ namespace AethermancerHarness
                 return JsonConfig.Error("choiceName is required");
 
             return ActionHandler.ExecuteChoice(choiceName, shift);
+        }
+
+        private string HandleReady()
+        {
+            var state = ActionHandler.GetReadinessState();
+            return JsonConfig.Serialize(state);
         }
     }
 }

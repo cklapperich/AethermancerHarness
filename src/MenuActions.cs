@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Reflection;
+using System.Threading;
 using Newtonsoft.Json.Linq;
 
 namespace AethermancerHarness
@@ -9,6 +11,15 @@ namespace AethermancerHarness
     /// </summary>
     public static partial class ActionHandler
     {
+        // =====================================================
+        // DIALOGUE STEP RESULT (for coroutine-based advancement)
+        // =====================================================
+
+        private class DialogueStepResult
+        {
+            public bool IsOpen { get; set; }
+            public DialogueDisplayData Data { get; set; }
+        }
         // =====================================================
         // POST-COMBAT AUTO-ADVANCE AND SKILL SELECTION
         // =====================================================
@@ -147,15 +158,17 @@ namespace AethermancerHarness
                 {
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUI:
                     case PostCombatMenu.EPostCombatMenuState.WorthinessUIDetailed:
-                        // Worthiness screen requires "spamming spacebar" - no indication when ready
-                        // Just keep triggering continue until state changes
-                        Plugin.Log.LogInfo($"ProcessPostCombatStates: Worthiness state, triggering Continue (CanContinue={worthinessCanContinue})");
-                        Plugin.RunOnMainThreadAndWait(() =>
+                        if (worthinessCanContinue)
                         {
-                            var menu = UIController.Instance?.PostCombatMenu;
-                            if (menu != null) TriggerContinue(menu);
-                        });
-                        System.Threading.Thread.Sleep(200);
+                            Plugin.Log.LogInfo("ProcessPostCombatStates: Worthiness ready, triggering Continue");
+                            Plugin.RunOnMainThreadAndWait(() =>
+                            {
+                                var menu = UIController.Instance?.PostCombatMenu;
+                                if (menu != null) TriggerContinue(menu);
+                            });
+                            System.Threading.Thread.Sleep(200);
+                        }
+                        // If not ready, loop continues and checks again
                         break;
 
                     case PostCombatMenu.EPostCombatMenuState.LevelUpUI:
@@ -826,17 +839,36 @@ namespace AethermancerHarness
             var data = GetCurrentDialogueData();
             if (data == null) return false;
 
-            if (data.DialogueOptions == null || data.DialogueOptions.Length == 0) return false;
-            if (data.DialogueOptions.Length == 1) return false;
+            if (data.DialogueOptions == null || data.DialogueOptions.Length == 0)
+            {
+                Plugin.Log.LogInfo($"HasMeaningfulChoice: No options, returning false");
+                return false;
+            }
+
+            if (data.DialogueOptions.Length == 1)
+            {
+                Plugin.Log.LogInfo($"HasMeaningfulChoice: Single option, returning false");
+                return false;
+            }
 
             int eventIndex = FindEventOptionIndex(data.DialogueOptions);
             if (eventIndex >= 0)
             {
+                Plugin.Log.LogInfo($"HasMeaningfulChoice: Event option found, returning false");
                 return false;
             }
 
-            if (data.IsChoiceEvent) return true;
-            if (data.DialogueOptions.Length > 1) return true;
+            if (data.IsChoiceEvent)
+            {
+                Plugin.Log.LogInfo($"HasMeaningfulChoice: IsChoiceEvent=true, returning true");
+                return true;
+            }
+
+            if (data.DialogueOptions.Length > 1)
+            {
+                Plugin.Log.LogInfo($"HasMeaningfulChoice: Multiple options ({data.DialogueOptions.Length}), returning true");
+                return true;
+            }
 
             return false;
         }
@@ -855,78 +887,287 @@ namespace AethermancerHarness
             return -1;
         }
 
-        private static void AutoProgressDialogue(int timeoutMs = 10000)
+        // =====================================================
+        // COROUTINE-BASED SINGLE-STEP DIALOGUE ADVANCEMENT
+        // =====================================================
+
+        /// <summary>
+        /// Coroutine that advances dialogue by one step and waits for Unity frames to process.
+        /// This allows Unity's frame loop to continue, preventing the deadlock.
+        /// </summary>
+        private static IEnumerator AdvanceDialogueOneStepCoroutine(Action<DialogueStepResult> callback)
         {
-            var startTime = DateTime.Now;
             var display = UIController.Instance?.DialogueDisplay;
 
-            while (!TimedOut(startTime, timeoutMs))
+            if (display != null && IsDialogueOpen())
             {
+                // Perform the advancement
+                display.OnConfirm(isMouseClick: false);
+
+                // Wait for frames to process (let Unity update the dialogue state)
+                yield return null;  // Wait 1 frame
+                yield return null;  // Wait another frame for state to stabilize
+            }
+
+            // Gather result
+            var result = new DialogueStepResult
+            {
+                IsOpen = IsDialogueOpen(),
+                Data = GetCurrentDialogueData()
+            };
+
+            callback(result);
+        }
+
+        /// <summary>
+        /// Wrapper that HTTP thread can call (blocking on HTTP thread, but doesn't block main thread).
+        /// Advances dialogue by one step using coroutines.
+        /// </summary>
+        private static DialogueStepResult AdvanceDialogueOneStep(int timeoutMs = 3000)
+        {
+            DialogueStepResult result = null;
+            var completedEvent = new ManualResetEventSlim(false);
+
+            Plugin.RunOnMainThread(() =>
+            {
+                Plugin.Instance.StartCoroutine(AdvanceDialogueOneStepCoroutine((stepResult) =>
+                {
+                    result = stepResult;
+                    completedEvent.Set();
+                }));
+            });
+
+            // HTTP thread blocks here, but main thread is free to process frames
+            if (!completedEvent.Wait(timeoutMs))
+            {
+                throw new TimeoutException("Dialogue step timed out");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Coroutine that selects a dialogue choice and waits for Unity frames to process.
+        /// </summary>
+        private static IEnumerator SelectChoiceCoroutine(int choiceIndex, Action<DialogueStepResult> callback)
+        {
+            var dialogueInteractable = GetCurrentDialogue();
+            var display = UIController.Instance?.DialogueDisplay;
+
+            if (dialogueInteractable != null && display != null)
+            {
+                var dialogueData = GetCurrentDialogueData();
+                if (dialogueData != null && dialogueData.DialogueOptions != null &&
+                    choiceIndex >= 0 && choiceIndex < dialogueData.DialogueOptions.Length)
+                {
+                    try
+                    {
+                        // Select the option in the UI
+                        var characterDisplay = dialogueData.LeftIsSpeaking
+                            ? display.LeftCharacterDisplay
+                            : display.RightCharacterDisplay;
+
+                        if (characterDisplay != null)
+                        {
+                            if (dialogueData.IsChoiceEvent && characterDisplay.ChoiceEventOptions != null)
+                            {
+                                characterDisplay.ChoiceEventOptions.SelectByIndex(choiceIndex);
+                            }
+                            else if (characterDisplay.DialogOptions != null)
+                            {
+                                characterDisplay.DialogOptions.SelectByIndex(choiceIndex);
+                            }
+                        }
+
+                        // Trigger the selection
+                        dialogueInteractable.TriggerNodeOnCloseEvents();
+
+                        bool isEnd, forceSkip;
+                        dialogueInteractable.SelectDialogueOption(choiceIndex, dialogueData.DialogueOptions.Length,
+                            out isEnd, out forceSkip);
+
+                        if (isEnd && forceSkip)
+                        {
+                            UIController.Instance.SetDialogueVisibility(visible: false);
+                        }
+                        else if (IsDialogueOpen())
+                        {
+                            var nextDialogue = dialogueInteractable.GetNextDialogue();
+                            if (nextDialogue != null)
+                            {
+                                display.ShowDialogue(nextDialogue);
+                            }
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Plugin.Log.LogError($"SelectChoiceCoroutine: Exception - {ex.Message}");
+                    }
+                }
+
+                yield return null;
+                yield return null;
+            }
+
+            var result = new DialogueStepResult
+            {
+                IsOpen = IsDialogueOpen(),
+                Data = GetCurrentDialogueData()
+            };
+
+            callback(result);
+        }
+
+        /// <summary>
+        /// Wrapper that HTTP thread can call to select a dialogue choice using coroutines.
+        /// </summary>
+        private static DialogueStepResult AdvanceDialogueOneStepWithChoice(int choiceIndex, int timeoutMs = 3000)
+        {
+            DialogueStepResult result = null;
+            var completedEvent = new ManualResetEventSlim(false);
+
+            Plugin.RunOnMainThread(() =>
+            {
+                Plugin.Instance.StartCoroutine(SelectChoiceCoroutine(choiceIndex, (stepResult) =>
+                {
+                    result = stepResult;
+                    completedEvent.Set();
+                }));
+            });
+
+            if (!completedEvent.Wait(timeoutMs))
+            {
+                throw new TimeoutException("Choice selection timed out");
+            }
+
+            return result;
+        }
+
+        private static void AutoProgressDialogue(int maxSteps = 50)
+        {
+            Plugin.Log.LogInfo($"AutoProgressDialogue: Starting step-by-step progression (maxSteps: {maxSteps})");
+
+            for (int step = 0; step < maxSteps; step++)
+            {
+                // Check if dialogue closed
                 if (!IsDialogueOpen())
                 {
                     Plugin.Log.LogInfo("AutoProgressDialogue: Dialogue closed");
                     return;
                 }
 
+                // Check if skill selection opened
                 if (StateSerializer.IsInSkillSelection())
                 {
                     Plugin.Log.LogInfo("AutoProgressDialogue: Skill selection opened");
                     return;
                 }
 
+                // Get current dialogue data
                 var data = GetCurrentDialogueData();
                 if (data == null)
                 {
-                    System.Threading.Thread.Sleep(100);
-                    continue;
+                    Plugin.Log.LogInfo("AutoProgressDialogue: No dialogue data, stopping");
+                    return;
                 }
 
+                Plugin.Log.LogInfo($"AutoProgressDialogue: Step {step}: DialogueOptions.Length={data?.DialogueOptions?.Length ?? -1}, IsChoiceEvent={data?.IsChoiceEvent}");
+
+                // Check for "Event" option that should be auto-selected
                 if (data.DialogueOptions != null && data.DialogueOptions.Length > 0)
                 {
                     int eventIndex = FindEventOptionIndex(data.DialogueOptions);
                     if (eventIndex >= 0)
                     {
-                        Plugin.Log.LogInfo($"AutoProgressDialogue: Found 'Event' option at index {eventIndex}, auto-selecting");
-                        SelectDialogueOptionInternal(eventIndex);
-                        int eventDelay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 300;
-                        System.Threading.Thread.Sleep(eventDelay);
-                        continue;
+                        Plugin.Log.LogInfo($"AutoProgressDialogue: Auto-selecting Event option at index {eventIndex}");
+                        try
+                        {
+                            var stepResult = AdvanceDialogueOneStepWithChoice(eventIndex);
+                            // Optional delay for watchable mode
+                            if (Plugin.WatchableMode)
+                            {
+                                System.Threading.Thread.Sleep(Plugin.WatchableDelayMs);
+                            }
+                            continue;  // Loop to next step
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Plugin.Log.LogError($"AutoProgressDialogue: Failed to select Event option - {ex.Message}");
+                            return;
+                        }
                     }
                 }
 
+                // Check if this is a decision point
                 if (HasMeaningfulChoice())
                 {
-                    Plugin.Log.LogInfo($"AutoProgressDialogue: Meaningful choice found with {data.DialogueOptions?.Length ?? 0} options");
+                    Plugin.Log.LogInfo($"AutoProgressDialogue: Meaningful choice found, stopping");
                     return;
                 }
 
-                // Handle single-option dialogues (like care chests) - auto-select the only option
+                // Handle single-choice dialogues
                 if (data.DialogueOptions != null && data.DialogueOptions.Length == 1)
                 {
                     Plugin.Log.LogInfo($"AutoProgressDialogue: Single option '{data.DialogueOptions[0]}', auto-selecting");
-                    SelectDialogueOptionInternal(0);
-                    int singleOptionDelay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 300;
-                    System.Threading.Thread.Sleep(singleOptionDelay);
-                    continue;
+                    try
+                    {
+                        var stepResult = AdvanceDialogueOneStepWithChoice(0);
+                        // Optional delay for watchable mode
+                        if (Plugin.WatchableMode)
+                        {
+                            System.Threading.Thread.Sleep(Plugin.WatchableDelayMs);
+                        }
+                        continue;  // Loop to next step
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Plugin.Log.LogError($"AutoProgressDialogue: Failed to select single option - {ex.Message}");
+                        return;
+                    }
                 }
 
-                Plugin.Log.LogInfo($"AutoProgressDialogue: Auto-advancing past '{data.DialogueText?.Substring(0, Math.Min(50, data.DialogueText?.Length ?? 0))}...'");
-                Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
+                // Handle text-only dialogues (no options)
+                if (data.DialogueOptions == null || data.DialogueOptions.Length == 0)
+                {
+                    Plugin.Log.LogInfo($"AutoProgressDialogue: Text-only dialogue, advancing");
+                    try
+                    {
+                        var stepResult = AdvanceDialogueOneStep();
 
-                int delay = Plugin.WatchableMode ? Plugin.WatchableDelayMs : 150;
-                System.Threading.Thread.Sleep(delay);
+                        if (!stepResult.IsOpen)
+                        {
+                            Plugin.Log.LogInfo("AutoProgressDialogue: Dialogue closed after advancement");
+                            return;
+                        }
+
+                        // Optional delay for watchable mode
+                        if (Plugin.WatchableMode)
+                        {
+                            System.Threading.Thread.Sleep(Plugin.WatchableDelayMs);
+                        }
+                        continue;  // Loop to next step
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Plugin.Log.LogError($"AutoProgressDialogue: Failed to advance text-only dialogue - {ex.Message}");
+                        return;
+                    }
+                }
+
+                // Fallback: shouldn't reach here
+                Plugin.Log.LogError("AutoProgressDialogue: Unexpected dialogue state");
+                throw new InvalidOperationException($"Unexpected dialogue state: {data.DialogueOptions?.Length ?? 0} options, IsChoiceEvent={data.IsChoiceEvent}");
             }
 
-            Plugin.Log.LogWarning("AutoProgressDialogue: Timeout");
+            Plugin.Log.LogError($"AutoProgressDialogue: Max steps ({maxSteps}) reached - dialogue did not complete");
+            throw new TimeoutException($"Dialogue progression exceeded maximum steps ({maxSteps}) without reaching a decision point or completion");
         }
 
         private static void SelectDialogueOptionInternal(int choiceIndex)
         {
-            var dialogueInteractable = GetCurrentDialogue();
             var dialogueData = GetCurrentDialogueData();
-            var display = UIController.Instance?.DialogueDisplay;
 
-            if (dialogueInteractable == null || dialogueData == null || display == null)
+            if (dialogueData == null)
             {
                 Plugin.Log.LogWarning("SelectDialogueOptionInternal: Dialogue state not available");
                 return;
@@ -943,29 +1184,9 @@ namespace AethermancerHarness
 
             try
             {
-                Plugin.RunOnMainThreadAndWait(() =>
-                {
-                    dialogueInteractable.TriggerNodeOnCloseEvents();
-
-                    bool isEnd, forceSkip;
-                    dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out isEnd, out forceSkip);
-
-                    Plugin.Log.LogInfo($"SelectDialogueOptionInternal: isEnd={isEnd}, forceSkip={forceSkip}");
-
-                    if (isEnd && forceSkip)
-                    {
-                        Plugin.Log.LogInfo("SelectDialogueOptionInternal: Dialogue ending");
-                        UIController.Instance.SetDialogueVisibility(visible: false);
-                    }
-                    else if (IsDialogueOpen())
-                    {
-                        var nextDialogue = dialogueInteractable.GetNextDialogue();
-                        if (nextDialogue != null)
-                        {
-                            display.ShowDialogue(nextDialogue);
-                        }
-                    }
-                });
+                // Use coroutine-based approach to avoid blocking main thread
+                var stepResult = AdvanceDialogueOneStepWithChoice(choiceIndex);
+                Plugin.Log.LogInfo($"SelectDialogueOptionInternal: Choice selection completed, dialogue open: {stepResult.IsOpen}");
             }
             catch (System.Exception ex)
             {
@@ -973,6 +1194,9 @@ namespace AethermancerHarness
             }
         }
 
+        /// <summary>
+        /// NPC interaction - now uses unified TeleportAndInteract.
+        /// </summary>
         public static string ExecuteNpcInteract(string npcName)
         {
             if (GameStateManager.Instance?.IsCombat ?? false)
@@ -981,98 +1205,12 @@ namespace AethermancerHarness
             if (IsDialogueOpen())
                 return JsonConfig.Error("Dialogue already open");
 
-            var map = LevelGenerator.Instance?.Map;
-            if (map == null)
-                return JsonConfig.Error("Map not loaded");
+            if (string.IsNullOrEmpty(npcName))
+                return JsonConfig.Error("npcName is required");
 
-            var interactables = map.DialogueInteractables;
-            if (interactables == null || interactables.Count == 0)
-                return JsonConfig.Error("No NPCs on map");
-
-            // Build NPC names
-            var npcNames = new System.Collections.Generic.List<string>();
-            foreach (var interactable in interactables)
-            {
-                if (interactable == null) continue;
-                var gameObjectName = interactable.gameObject.name;
-
-                // Check for care chest pattern first
-                string name;
-                if (gameObjectName.Contains("SmallEvent_NPC_Collectable"))
-                    name = "Care Chest";
-                else
-                    name = interactable.DialogueCharacter?.CharacterName ?? gameObjectName;
-
-                npcNames.Add(name);
-            }
-
-            var npcDisplayNames = StateSerializer.DeduplicateNames(npcNames);
-            var (npcIndex, npcError) = StateSerializer.ResolveNameToIndex(npcName, npcDisplayNames, "NPC");
-
-            if (npcIndex < 0)
-                return JsonConfig.Error(npcError);
-
-            var resolvedInteractable = interactables[npcIndex];
-            if (resolvedInteractable == null)
-                return JsonConfig.Error("NPC is null");
-
-            var npc = resolvedInteractable as DialogueInteractable;
-            if (npc == null)
-                return JsonConfig.Error("Interactable is not a DialogueInteractable");
-
-            Plugin.Log.LogInfo($"ExecuteNpcInteract: Starting interaction with {npcName}");
-
-            Plugin.RunOnMainThreadAndWait(() =>
-            {
-                var npcPos = npc.transform.position;
-                var playerMovement = PlayerMovementController.Instance;
-                if (playerMovement != null)
-                {
-                    var targetPos = new UnityEngine.Vector3(npcPos.x - 2f, npcPos.y, npcPos.z);
-                    playerMovement.transform.position = targetPos;
-                    Plugin.Log.LogInfo($"ExecuteNpcInteract: Teleported player near NPC at ({targetPos.x:F1}, {targetPos.y:F1})");
-                }
-
-                npc.ForceStart();
-            });
-
-            var startTime = DateTime.Now;
-            while (!IsDialogueOpen() && !TimedOut(startTime, 3000))
-            {
-                System.Threading.Thread.Sleep(50);
-            }
-
-            if (!IsDialogueOpen())
-            {
-                return JsonConfig.Error("Dialogue failed to open");
-            }
-
-            System.Threading.Thread.Sleep(200);
-            AutoProgressDialogue();
-
-            if (StateSerializer.IsInSkillSelection())
-            {
-                return JsonConfig.Serialize(new
-                {
-                    success = true,
-                    phase = GamePhase.SkillSelection,
-                    transitionedFrom = "dialogue",
-                    npc = npcName
-                });
-            }
-
-            if (!IsDialogueOpen())
-            {
-                return JsonConfig.Serialize(new
-                {
-                    success = true,
-                    phase = GamePhase.Exploration,
-                    dialogueComplete = true,
-                    npc = npcName
-                });
-            }
-
-            return StateSerializer.GetDialogueStateJson();
+            // Use unified teleport-and-interact
+            Plugin.Log.LogInfo($"ExecuteNpcInteract: Delegating to TeleportAndInteract for '{npcName}'");
+            return TeleportAndInteract(npcName);
         }
 
         public static string ExecuteDialogueChoice(int choiceIndex)
@@ -1181,6 +1319,7 @@ namespace AethermancerHarness
                 }
 
                 System.Threading.Thread.Sleep(200);
+                Plugin.Log.LogInfo($"ExecuteDialogueChoice: About to call AutoProgressDialogue");
                 AutoProgressDialogue();
 
                 if (StateSerializer.IsInEquipmentSelection())

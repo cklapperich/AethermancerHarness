@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace AethermancerHarness
 {
@@ -82,83 +84,54 @@ namespace AethermancerHarness
         }
 
         /// <summary>
-        /// Applies numbered suffixes to duplicate names in a list.
-        /// Returns a dictionary mapping original index to display name.
+        /// Gets a display name for an object, adding a numeric suffix if there are duplicates.
+        /// Uses object identity (RuntimeHelpers.GetHashCode) to ensure stable ordering.
         /// </summary>
-        public static Dictionary<int, string> DeduplicateNames(List<string> names)
+        public static string GetDisplayName<T>(T obj, IReadOnlyList<T> context, Func<T, string> getBaseName) where T : class
         {
-            var result = new Dictionary<int, string>();
-            var counts = new Dictionary<string, int>();
-            var seen = new Dictionary<string, int>();
+            if (obj == null) return "Unknown";
 
-            // First pass: count occurrences
-            foreach (var name in names)
-            {
-                if (!string.IsNullOrEmpty(name))
-                    counts[name] = counts.ContainsKey(name) ? counts[name] + 1 : 1;
-            }
+            var baseName = getBaseName(obj);
+            var sameNameObjects = context
+                .Where(o => o != null && getBaseName(o) == baseName)
+                .OrderBy(o => RuntimeHelpers.GetHashCode(o))
+                .ToList();
 
-            // Second pass: assign display names
-            for (int i = 0; i < names.Count; i++)
-            {
-                var name = names[i];
-                if (string.IsNullOrEmpty(name))
-                {
-                    result[i] = name;
-                    continue;
-                }
+            if (sameNameObjects.Count == 1)
+                return baseName;
 
-                seen[name] = seen.ContainsKey(name) ? seen[name] + 1 : 1;
-                result[i] = counts[name] > 1 ? $"{name} {seen[name]}" : name;
-            }
-
-            return result;
+            int position = sameNameObjects.IndexOf(obj) + 1;
+            return $"{baseName} {position}";
         }
 
         /// <summary>
-        /// Resolves a name to an index from a list of display names.
-        /// Returns (index, error) where error is null on success.
+        /// Finds an object by its display name within a context list.
         /// </summary>
-        public static (int index, string error) ResolveNameToIndex(string name, Dictionary<int, string> displayNames, string itemType = "item")
+        public static T FindByDisplayName<T>(string displayName, IReadOnlyList<T> context, Func<T, string> getBaseName) where T : class
         {
-            if (string.IsNullOrEmpty(name))
-                return (-1, $"{itemType} name is required");
+            if (string.IsNullOrEmpty(displayName)) return null;
 
-            foreach (var kvp in displayNames)
+            foreach (var obj in context)
             {
-                if (kvp.Value.Equals(name, StringComparison.OrdinalIgnoreCase))
-                    return (kvp.Key, null);
+                if (obj == null) continue;
+                var objDisplayName = GetDisplayName(obj, context, getBaseName);
+                if (objDisplayName.Equals(displayName, StringComparison.OrdinalIgnoreCase))
+                    return obj;
             }
-
-            return (-1, $"No {itemType} named '{name}'");
+            return null;
         }
 
         /// <summary>
-        /// Helper to get deduplicated names for combat monsters (allies or enemies).
+        /// Gets all display names for objects in a context list.
         /// </summary>
-        public static Dictionary<int, string> GetCombatMonsterNames(List<Monster> monsters, bool onlyAlive = false)
+        public static List<string> GetAllDisplayNames<T>(IReadOnlyList<T> context, Func<T, string> getBaseName) where T : class
         {
-            var names = new List<string>();
-            var validIndices = new List<int>();
-
-            for (int i = 0; i < monsters.Count; i++)
+            var result = new List<string>();
+            foreach (var obj in context)
             {
-                if (onlyAlive && (monsters[i].State?.IsDead ?? false))
-                    continue;
-
-                names.Add(StripMarkup(monsters[i].Name));
-                validIndices.Add(i);
+                if (obj == null) continue;
+                result.Add(GetDisplayName(obj, context, getBaseName));
             }
-
-            var deduplicated = DeduplicateNames(names);
-
-            // Remap to original indices
-            var result = new Dictionary<int, string>();
-            for (int i = 0; i < validIndices.Count; i++)
-            {
-                result[validIndices[i]] = deduplicated[i];
-            }
-
             return result;
         }
 
@@ -313,14 +286,8 @@ namespace AethermancerHarness
                 });
             }
 
-            // Collect monster names for deduplication
-            var monsterNames = new List<string>();
-            for (int i = 0; i < displayedMonsters.Count; i++)
-                monsterNames.Add(displayedMonsters[i].Name ?? "Unknown");
-
-            var monsterDisplayNames = DeduplicateNames(monsterNames);
-
-            // Build choices with deduplicated names
+            // Build choices using identity-based naming
+            Func<Monster, string> getMonsterName = m => m.Name ?? "Unknown";
             var choices = new List<MonsterChoice>();
             int outputIndex = 0;
             int monsterIndex = 0;
@@ -344,7 +311,7 @@ namespace AethermancerHarness
                     choices.Add(new MonsterChoice
                     {
                         Type = ChoiceType.Monster,
-                        Name = monsterDisplayNames[monsterIndex],
+                        Name = GetDisplayName(monster, displayedMonsters, getMonsterName),
                         HasShiftedVariant = hasShiftedVariant,
                         Details = BuildMonsterDetails(monster, outputIndex)
                     });
@@ -447,21 +414,15 @@ namespace AethermancerHarness
 
             var stockedItems = merchant.StockedItems;
 
-            // Collect item names for deduplication
-            var itemNames = new List<string>();
-            for (int i = 0; i < stockedItems.Count; i++)
-                itemNames.Add(stockedItems[i].GetName());
-
-            var itemDisplayNames = DeduplicateNames(itemNames);
-
-            // Build choices with deduplicated names
+            // Build choices using identity-based naming
+            Func<ShopItem, string> getItemName = item => item.GetName();
             var choices = new List<MerchantItem>();
             for (int i = 0; i < stockedItems.Count; i++)
             {
                 var item = stockedItems[i];
                 choices.Add(new MerchantItem
                 {
-                    Name = itemDisplayNames[i],
+                    Name = GetDisplayName(item, stockedItems, getItemName),
                     Type = item.ItemType.ToString().ToLower(),
                     Rarity = item.ItemRarity.ToString(),
                     Price = item.Price,
@@ -511,7 +472,8 @@ namespace AethermancerHarness
             {
                 var choice = new DialogueChoice
                 {
-                    Text = dialogueData.DialogueOptions[i]
+                    Index = i,
+                    Text = StripMarkup(dialogueData.DialogueOptions[i])
                 };
 
                 if (currentOptions != null && i < currentOptions.Count)
@@ -532,7 +494,7 @@ namespace AethermancerHarness
             {
                 Phase = GamePhase.Dialogue,
                 Npc = npcName,
-                DialogueText = dialogueData.DialogueText,
+                DialogueText = StripMarkup(dialogueData.DialogueText),
                 IsChoiceEvent = dialogueData.IsChoiceEvent,
                 Choices = choices,
                 CanGoBack = canGoBack,
@@ -854,49 +816,24 @@ namespace AethermancerHarness
             var targets = new List<TargetInfo>();
             var targetType = skill.Action?.TargetType ?? ETargetType.SingleEnemy;
             var cc = CombatController.Instance;
+            Func<Monster, string> getMonsterName = m => StripMarkup(m.Name);
 
             switch (targetType)
             {
                 case ETargetType.SingleEnemy:
                 case ETargetType.AllEnemies:
-                    // Collect enemy names for deduplication
-                    var enemyNames = new List<string>();
-                    for (int i = 0; i < cc.Enemies.Count; i++)
-                        if (!cc.Enemies[i].State.IsDead)
-                            enemyNames.Add(StripMarkup(cc.Enemies[i].Name));
-
-                    var enemyDisplayNames = DeduplicateNames(enemyNames);
-                    int enemyIdx = 0;
-                    for (int i = 0; i < cc.Enemies.Count; i++)
-                    {
-                        var e = cc.Enemies[i];
-                        if (!e.State.IsDead)
-                        {
-                            targets.Add(new TargetInfo { Name = enemyDisplayNames[enemyIdx] });
-                            enemyIdx++;
-                        }
-                    }
+                    // Filter alive enemies and build display names using identity-based naming
+                    var aliveEnemies = cc.Enemies.Where(e => !e.State.IsDead).ToList();
+                    foreach (var e in aliveEnemies)
+                        targets.Add(new TargetInfo { Name = GetDisplayName(e, aliveEnemies, getMonsterName) });
                     break;
 
                 case ETargetType.SingleAlly:
                 case ETargetType.AllAllies:
-                    // Collect ally names for deduplication
-                    var allyNames = new List<string>();
-                    for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                        if (!cc.PlayerMonsters[i].State.IsDead)
-                            allyNames.Add(StripMarkup(cc.PlayerMonsters[i].Name));
-
-                    var allyDisplayNames = DeduplicateNames(allyNames);
-                    int allyIdx = 0;
-                    for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                    {
-                        var m = cc.PlayerMonsters[i];
-                        if (!m.State.IsDead)
-                        {
-                            targets.Add(new TargetInfo { Name = allyDisplayNames[allyIdx] });
-                            allyIdx++;
-                        }
-                    }
+                    // Filter alive allies and build display names using identity-based naming
+                    var aliveAllies = cc.PlayerMonsters.Where(m => !m.State.IsDead).ToList();
+                    foreach (var m in aliveAllies)
+                        targets.Add(new TargetInfo { Name = GetDisplayName(m, aliveAllies, getMonsterName) });
                     break;
 
                 case ETargetType.SelfOrOwner:
@@ -912,35 +849,21 @@ namespace AethermancerHarness
             var cc = CombatController.Instance;
             var current = cc.CurrentMonster;
             var currentIdx = current != null ? (current.BelongsToPlayer ? cc.PlayerMonsters.IndexOf(current) : -1) : -1;
+            Func<Monster, string> getMonsterName = m => StripMarkup(m.Name);
 
-            // Collect base names for deduplication
-            var allyNames = new List<string>();
-            for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                allyNames.Add(StripMarkup(cc.PlayerMonsters[i].Name));
-
-            var enemyNames = new List<string>();
-            for (int i = 0; i < cc.Enemies.Count; i++)
-                enemyNames.Add(StripMarkup(cc.Enemies[i].Name));
-
-            // Deduplicate names
-            var allyDisplayNames = DeduplicateNames(allyNames);
-            var enemyDisplayNames = DeduplicateNames(enemyNames);
-
-            // Build ally/enemy lists with deduplicated names
+            // Build ally/enemy lists using identity-based naming
             var allies = new List<CombatMonster>();
             for (int i = 0; i < cc.PlayerMonsters.Count; i++)
-                allies.Add(BuildCombatMonster(cc.PlayerMonsters[i], i, true, allyDisplayNames[i]));
+                allies.Add(BuildCombatMonster(cc.PlayerMonsters[i], i, true, GetDisplayName(cc.PlayerMonsters[i], cc.PlayerMonsters, getMonsterName)));
 
             var enemies = new List<CombatMonster>();
             for (int i = 0; i < cc.Enemies.Count; i++)
-                enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false, enemyDisplayNames[i]));
+                enemies.Add(BuildCombatMonster(cc.Enemies[i], i, false, GetDisplayName(cc.Enemies[i], cc.Enemies, getMonsterName)));
 
             return JsonConfig.Serialize(new CombatState
             {
                 Phase = GamePhase.Combat,
                 Round = cc.Timeline?.CurrentRound ?? 0,
-                ReadyForInput = ActionHandler.IsReadyForInput(),
-                InputStatus = ActionHandler.GetInputReadyStatus(),
                 CurrentActorIndex = currentIdx,
                 PlayerAether = BuildAetherValues(cc.PlayerAether?.Aether),
                 EnemyAether = BuildAetherValues(cc.EnemyAether?.Aether),
@@ -963,8 +886,7 @@ namespace AethermancerHarness
             {
                 Phase = GamePhase.Combat,
                 PlayerAether = BuildAetherValues(cc.PlayerAether?.Aether),
-                CurrentActorIndex = currentIdx,
-                ReadyForInput = ActionHandler.IsReadyForInput()
+                CurrentActorIndex = currentIdx
             };
 
             if (before != null && AetherChanged(before.EnemyAether, cc.EnemyAether?.Aether))
@@ -1245,29 +1167,21 @@ namespace AethermancerHarness
             var groups = ExplorationController.Instance?.EncounterGroups;
             if (groups == null) return list;
 
-            // Collect position-based names
-            var groupNames = new List<string>();
-            for (int i = 0; i < groups.Count; i++)
+            // Filter null groups and build display names using identity-based naming
+            var validGroups = groups.Where(g => g != null).ToList();
+            Func<MonsterGroup, string> getGroupName = g =>
             {
-                var group = groups[i];
-                if (group == null) continue;
-                var pos = group.transform.position;
-                groupNames.Add($"Monster Group at ({pos.x:F0}, {pos.y:F0})");
-            }
+                var pos = g.transform.position;
+                return $"Monster Group at ({pos.x:F0}, {pos.y:F0})";
+            };
 
-            // Deduplicate names (in case multiple groups are at similar positions)
-            var displayNames = DeduplicateNames(groupNames);
-
-            // Build monster groups list with deduplicated names
-            int displayIndex = 0;
-            for (int i = 0; i < groups.Count; i++)
+            // Build monster groups list with identity-based naming
+            foreach (var group in validGroups)
             {
-                var group = groups[i];
-                if (group == null) continue;
                 var pos = group.transform.position;
                 list.Add(new MonsterGroupInfo
                 {
-                    Name = displayNames[displayIndex],
+                    Name = GetDisplayName(group, validGroups, getGroupName),
                     X = pos.x,
                     Y = pos.y,
                     Z = pos.z,
@@ -1276,7 +1190,6 @@ namespace AethermancerHarness
                     EncounterType = group.EncounterData?.EncounterType.ToString() ?? "Unknown",
                     MonsterCount = group.OverworldMonsters?.Count ?? 0
                 });
-                displayIndex++;
             }
             return list;
         }
@@ -1494,19 +1407,10 @@ namespace AethermancerHarness
             if (consumables == null) return list;
 
             var currentMonster = CombatController.Instance?.CurrentMonster;
+            Func<ConsumableInstance, string> getConsumableName = c =>
+                StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown");
 
-            // Collect base names for deduplication
-            var consumableNames = new List<string>();
-            for (int i = 0; i < consumables.Count; i++)
-            {
-                var c = consumables[i];
-                consumableNames.Add(StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
-            }
-
-            // Deduplicate names
-            var displayNames = DeduplicateNames(consumableNames);
-
-            // Build consumables list with deduplicated names
+            // Build consumables list with identity-based naming
             for (int i = 0; i < consumables.Count; i++)
             {
                 var c = consumables[i];
@@ -1514,7 +1418,7 @@ namespace AethermancerHarness
 
                 list.Add(new ConsumableInfo
                 {
-                    Name = displayNames[i],
+                    Name = GetDisplayName(c, consumables, getConsumableName),
                     Description = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     CurrentCharges = c.Charges,
                     MaxCharges = c.GetMaxCharges(),
@@ -1591,34 +1495,22 @@ namespace AethermancerHarness
             var consumables = InventoryManager.Instance?.GetAllConsumables();
             if (consumables == null) return list;
 
-            // Collect base names for items with charges (only items that will be in the list)
-            var artifactNames = new List<string>();
-            for (int i = 0; i < consumables.Count; i++)
+            // Filter to only items with charges
+            var activeArtifacts = consumables.Where(c => c.Charges > 0).ToList();
+            Func<ConsumableInstance, string> getArtifactName = c =>
+                StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown");
+
+            // Build artifacts list with identity-based naming
+            foreach (var c in activeArtifacts)
             {
-                var c = consumables[i];
-                if (c.Charges > 0)
-                    artifactNames.Add(StripMarkup(c.Consumable?.Name ?? c.Skill?.Name ?? "Unknown"));
-            }
-
-            // Deduplicate names
-            var displayNames = DeduplicateNames(artifactNames);
-
-            // Build artifacts list with deduplicated names
-            int displayIndex = 0;
-            for (int i = 0; i < consumables.Count; i++)
-            {
-                var c = consumables[i];
-                if (c.Charges <= 0) continue;
-
                 list.Add(new ArtifactInfo
                 {
-                    Name = displayNames[displayIndex],
+                    Name = GetDisplayName(c, activeArtifacts, getArtifactName),
                     Description = StripMarkup(c.Action?.GetDescription(c) ?? ""),
                     CurrentCharges = c.Charges,
                     MaxCharges = c.GetMaxCharges(),
                     TargetType = (c.Action?.TargetType ?? ETargetType.SelfOrOwner).ToString()
                 });
-                displayIndex++;
             }
 
             return list;
