@@ -29,8 +29,6 @@ namespace AethermancerHarness
             if (error != null)
                 return JsonConfig.Error(error);
 
-            Plugin.Log.LogInfo($"TeleportAndInteract: Found {interactableType} named '{interactableName}'");
-
             // Get position
             UnityEngine.Vector3 targetPos = UnityEngine.Vector3.zero;
             Plugin.RunOnMainThreadAndWait(() =>
@@ -42,7 +40,6 @@ namespace AethermancerHarness
             Plugin.RunOnMainThreadAndWait(() =>
             {
                 TeleportActions.TeleportInternal(targetPos);
-                Plugin.Log.LogInfo($"TeleportAndInteract: Teleported to ({targetPos.x:F1}, {targetPos.y:F1})");
             });
 
             // Wait for teleport animation to complete (HTTP thread - safe)
@@ -338,9 +335,6 @@ namespace AethermancerHarness
 
             var targetGroupIndex = validGroups.IndexOf(targetGroup);
 
-            Plugin.Log.LogInfo($"ExecuteVoidBlitz: Targeting group {targetGroupIndex}, monster '{targetMonsterDisplayName}'");
-
-            // Run void blitz trigger on main thread (UI operations like poise preview require main thread)
             Plugin.RunOnMainThreadAndWait(() =>
             {
                 VoidBlitzBypass.IsActive = true;
@@ -350,8 +344,6 @@ namespace AethermancerHarness
                 PlayerController.Instance.AetherBlitzTargetGroup = targetGroup;
                 PlayerController.Instance.TryToStartAetherBlitz(targetMonster);
             });
-
-            Plugin.Log.LogInfo("ExecuteVoidBlitz: Void blitz triggered successfully");
 
             return JsonConfig.Serialize(new
             {
@@ -363,86 +355,6 @@ namespace AethermancerHarness
             });
         }
         
-        // =====================================================
-        // SIMPLIFIED INTERACT (backwards compatible)
-        // =====================================================
-
-        /// <summary>
-        /// Parameterless interact - finds first available interactable in priority order.
-        /// Kept for backwards compatibility.
-        /// </summary>
-        public static string ExecuteInteract()
-        {
-            var (valid, error) = ValidateNotInCombat();
-            if (!valid)
-                return JsonConfig.Error(error);
-
-            // Priority order for auto-selection
-            var currentArea = ExplorationController.Instance?.CurrentArea ?? EArea.PilgrimsRest;
-
-            // 1. Start Run in Pilgrim's Rest
-            if (currentArea == EArea.PilgrimsRest)
-            {
-                var startRunInteractable = StateSerializer.FindStartRunInteractable();
-                if (startRunInteractable != null)
-                {
-                    Plugin.Log.LogInfo("ExecuteInteract: Found StartRun, using unified interact");
-                    return TeleportAndInteract("StartRun");
-                }
-            }
-
-            // 2. Monster Shrine
-            var map = LevelGenerator.Instance?.Map;
-            if (map?.MonsterShrine != null && !map.MonsterShrine.WasUsedUp)
-            {
-                Plugin.Log.LogInfo("ExecuteInteract: Found MonsterShrine, using unified interact");
-                return TeleportAndInteract("MonsterShrine");
-            }
-
-            // 3. Merchant
-            if (map?.MerchantInteractable != null)
-            {
-                Plugin.Log.LogInfo("ExecuteInteract: Found Merchant, using unified interact");
-                return TeleportAndInteract("Merchant");
-            }
-
-            // 4. Aether Spring
-            if (map?.AetherSpringInteractables != null)
-            {
-                foreach (var s in map.AetherSpringInteractables)
-                {
-                    var spring = s as AetherSpringInteractable;
-                    if (spring != null && !spring.WasUsedUp)
-                    {
-                        Plugin.Log.LogInfo("ExecuteInteract: Found AetherSpring, using unified interact");
-                        return TeleportAndInteract("AetherSpring");
-                    }
-                }
-            }
-
-            // 5. Fallback to generic interact for nearest interactable
-            Plugin.Log.LogInfo("ExecuteInteract: No priority interactable found, using OnInteract()");
-            Plugin.RunOnMainThreadAndWait(() =>
-            {
-                PlayerController.Instance?.OnInteract();
-            });
-            return JsonConfig.Serialize(new { success = true, action = "interact" });
-        }
-
-        /// <summary>
-        /// Named interact - uses unified TeleportAndInteract.
-        /// The 'type' parameter is now ignored; name is used directly.
-        /// </summary>
-        public static string ExecuteInteract(string type, string name)
-        {
-            // Type parameter kept for backwards compatibility but ignored
-            // All resolution is by name now
-            if (string.IsNullOrEmpty(name))
-                return JsonConfig.Error("name is required");
-
-            return TeleportAndInteract(name);
-        }
-
         // =====================================================
         // LOOT ALL (BREAK DESTRUCTIBLES + COLLECT)
         // =====================================================

@@ -382,27 +382,16 @@ namespace AethermancerHarness
 
         private string HandleExplorationInteract(string body)
         {
-            // If no body, use the parameterless interact (backwards compatible)
             if (string.IsNullOrWhiteSpace(body))
-                return ActionHandler.ExecuteInteract();
+                return JsonConfig.Error("name is required");
 
             var json = JsonConfig.Parse(body);
             var name = JsonConfig.Value(json, "name", (string)null);
 
-            // If name provided, use unified TeleportAndInteract
-            if (!string.IsNullOrWhiteSpace(name))
-                return ActionHandler.TeleportAndInteract(name);
+            if (string.IsNullOrWhiteSpace(name))
+                return JsonConfig.Error("name is required");
 
-            // Legacy: type parameter (ignored, name is required now)
-            var type = JsonConfig.Value(json, "type", (string)null);
-            if (!string.IsNullOrWhiteSpace(type))
-            {
-                // Type without name - backwards compatible fallback
-                return ActionHandler.ExecuteInteract();
-            }
-
-            // No params - use parameterless interact
-            return ActionHandler.ExecuteInteract();
+            return ActionHandler.TeleportAndInteract(name);
         }
 
         private string HandleChoice(string body)
