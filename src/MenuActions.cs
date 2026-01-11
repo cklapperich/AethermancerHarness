@@ -212,24 +212,6 @@ namespace AethermancerHarness
             return false;
         }
 
-        // TODO: REMOVE SOMEHOW. This is only called in a single place. it also sleeps on the main thread which is a sin.
-        /// <summary>
-        /// Wait until a condition is met or timeout, checking on main thread. Returns true if condition was met.
-        /// </summary>
-        private static bool WaitUntilOnMainThread(System.Func<bool> condition, int timeoutMs, int pollIntervalMs = 100)
-        {
-            var startTime = DateTime.Now;
-            while (!TimedOut(startTime, timeoutMs))
-            {
-                bool result = false;
-                Plugin.RunOnMainThreadAndWait(() => result = condition());
-                if (result)
-                    return true;
-                System.Threading.Thread.Sleep(pollIntervalMs);
-            }
-            return false;
-        }
-
         private static bool IsPostCombatMenuOpen()
         {
             return UIController.Instance?.PostCombatMenu?.IsOpen ?? false;
@@ -278,8 +260,15 @@ namespace AethermancerHarness
 
         private static bool WaitForSkillSelectionOpen(DateTime startTime, int timeoutMs)
         {
-            int remainingMs = timeoutMs - (int)(DateTime.Now - startTime).TotalMilliseconds;
-            return remainingMs > 0 && WaitUntilOnMainThread(StateSerializer.IsInSkillSelection, remainingMs);
+            while (!TimedOut(startTime, timeoutMs))
+            {
+                bool isOpen = false;
+                Plugin.RunOnMainThreadAndWait(() => isOpen = StateSerializer.IsInSkillSelection());
+                if (isOpen)
+                    return true;
+                System.Threading.Thread.Sleep(100);
+            }
+            return false;
         }
 
         private static string CreateExplorationResult(CombatResult combatResult)
