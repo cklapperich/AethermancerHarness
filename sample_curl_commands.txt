@@ -42,7 +42,6 @@ curl -s -X POST http://localhost:8080/choice         -H "Content-Type: applicati
   "Gold": 22,
 
 ... rest of state ..
-
 }
 
 @src/menuactions.cs

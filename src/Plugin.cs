@@ -95,6 +95,21 @@ namespace AethermancerHarness
             }
         }
 
+        /// <summary>
+        /// Sleep that throws if called on main thread. Use this instead of Thread.Sleep
+        /// to catch accidental main thread blocking.
+        /// </summary>
+        public static void SafeSleep(int milliseconds)
+        {
+            if (IsMainThread)
+            {
+                var stackTrace = Environment.StackTrace;
+                Log.LogError($"FATAL: Thread.Sleep called on main thread! This blocks the game.\n{stackTrace}");
+                throw new InvalidOperationException($"Thread.Sleep({milliseconds}) called on main thread! This blocks the game.");
+            }
+            Thread.Sleep(milliseconds);
+        }
+
         private void Awake()
         {
             Instance = this;

@@ -498,7 +498,7 @@ namespace AethermancerHarness
                 if (IsTerminalBlockReason(lastState.BlockReason))
                     return lastState;
 
-                System.Threading.Thread.Sleep(pollIntervalMs);
+                Plugin.SafeSleep(pollIntervalMs);
             }
 
             // Return last state with timeout indication

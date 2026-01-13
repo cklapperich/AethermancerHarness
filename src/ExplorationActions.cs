@@ -20,21 +20,29 @@ namespace AethermancerHarness
         /// </summary>
         public static string TeleportAndInteract(string interactableName)
         {
-            var (valid, combatError) = ValidateNotInCombat();
-            if (!valid)
-                return JsonConfig.Error(combatError);
-
-            // Find the interactable
-            var (interactable, interactableType, error) = FindInteractableByName(interactableName);
-            if (error != null)
-                return JsonConfig.Error(error);
-
-            // Get position
+            // All validation and Unity lookups in one main thread call
+            object interactable = null;
+            InteractableType interactableType = default;
+            string error = null;
             UnityEngine.Vector3 targetPos = UnityEngine.Vector3.zero;
+
             Plugin.RunOnMainThreadAndWait(() =>
             {
-                targetPos = ((UnityEngine.Component)interactable).transform.position;
+                // Validate not in combat
+                if (GameStateManager.Instance?.IsCombat ?? false)
+                {
+                    error = "Cannot perform this action during combat";
+                    return;
+                }
+
+                // Find the interactable
+                (interactable, interactableType, error) = FindInteractableByName(interactableName);
+                if (interactable != null)
+                    targetPos = ((UnityEngine.Component)interactable).transform.position;
             });
+
+            if (error != null)
+                return JsonConfig.Error(error);
 
             // Teleport to the interactable (main thread)
             Plugin.RunOnMainThreadAndWait(() =>
@@ -42,11 +50,8 @@ namespace AethermancerHarness
                 TeleportActions.TeleportInternal(targetPos);
             });
 
-            // Wait for teleport animation to complete (HTTP thread - safe)
-            if (Plugin.WatchableMode)
-            {
-                WaitUntilReady(5000);
-            }
+            // Wait for teleport to complete before interacting
+            WaitUntilReady(5000);
 
             // Press F key - the game's unified interaction handler (main thread)
             Plugin.RunOnMainThreadAndWait(() =>
@@ -187,86 +192,68 @@ namespace AethermancerHarness
 
         /// <summary>
         /// Wait for interaction result based on expected type.
+        /// Uses unified readiness detection for consistency with the rest of the system.
         /// </summary>
         private static string WaitForInteractionResult(InteractableType expectedType, string interactableName, int timeoutMs = 3000)
         {
-            var startTime = DateTime.Now;
+            // Portal returns immediately - scene transition
+            if (expectedType == InteractableType.Portal)
+                return JsonConfig.Serialize(new { success = true, action = "portal_enter", type = expectedType, name = interactableName });
 
-            while (!TimedOut(startTime, timeoutMs))
+            // Chest returns immediately - loot is instant
+            if (expectedType == InteractableType.Chest)
             {
-                System.Threading.Thread.Sleep(50);
-
-                // Check for menus/states that might have opened
-                switch (expectedType)
-                {
-                    case InteractableType.MonsterShrine:
-                        if (StateSerializer.IsInMonsterSelection())
-                            return JsonConfig.Serialize(new { success = true, action = "shrine_interact", type = expectedType, name = interactableName });
-                        break;
-
-                    case InteractableType.Merchant:
-                        if (IsMerchantMenuOpen())
-                        {
-                            System.Threading.Thread.Sleep(200);
-                            return JsonConfig.Serialize(new { success = true, action = "merchant_interact", type = expectedType, name = interactableName });
-                        }
-                        break;
-
-                    case InteractableType.AetherSpring:
-                        if (StateSerializer.IsInAetherSpringMenu())
-                        {
-                            System.Threading.Thread.Sleep(200);
-                            return JsonConfig.Serialize(new { success = true, action = "aether_spring_interact", type = expectedType, name = interactableName });
-                        }
-                        break;
-
-                    case InteractableType.Portal:
-                        // Portal triggers scene transition - just return success
-                        return JsonConfig.Serialize(new { success = true, action = "portal_enter", type = expectedType, name = interactableName });
-
-                    case InteractableType.Npc:
-                    case InteractableType.Event:
-                        bool dialogueOpen = false;
-                        bool dialogueDataReady = false;
-                        bool dialogueInteractableReady = false;
-                        Plugin.RunOnMainThreadAndWait(() =>
-                        {
-                            dialogueOpen = IsDialogueOpen();
-                            dialogueInteractableReady = GetCurrentDialogue() != null;
-                            dialogueDataReady = GetCurrentDialogueData() != null;
-                            Plugin.Log.LogInfo($"[MainThread] IsDialogueOpen={dialogueOpen}, CurrentDialogue={dialogueInteractableReady}, DialogueData={dialogueDataReady}");
-                        });
-                        if (dialogueOpen && dialogueDataReady)
-                        {
-                            return StateSerializer.GetDialogueStateJson();
-                        }
-                        break;
-
-                    case InteractableType.StartRun:
-                        if (StateSerializer.IsInDifficultySelection())
-                            return StateSerializer.GetDifficultySelectionStateJson();
-                        if (StateSerializer.IsInMonsterSelection())
-                            return StateSerializer.GetMonsterSelectionStateJson();
-                        break;
-
-                    case InteractableType.Chest:
-                        // Chests drop loot immediately - check if equipment selection opened
-                        if (StateSerializer.IsInEquipmentSelection())
-                            return StateSerializer.GetEquipmentSelectionStateJson();
-                        // Otherwise just return success
-                        return JsonConfig.Serialize(new { success = true, action = "chest_opened", type = expectedType, name = interactableName });
-                }
+                // Brief wait to check if equipment selection opens
+                Plugin.SafeSleep(100);
+                if (StateSerializer.IsInEquipmentSelection())
+                    return StateSerializer.GetEquipmentSelectionStateJson();
+                return JsonConfig.Serialize(new { success = true, action = "chest_opened", type = expectedType, name = interactableName });
             }
 
-            // Timeout - return current state
-            Plugin.Log.LogWarning($"WaitForInteractionResult: Timeout waiting for {expectedType} menu");
+            // Use unified readiness for all other interactions
+            var readinessState = WaitUntilReadyWithState(timeoutMs);
+
+            // Map expected type to readiness phase and return appropriate state
+            switch (expectedType)
+            {
+                case InteractableType.Npc:
+                case InteractableType.Event:
+                    if (readinessState.Phase == "Dialogue" && readinessState.Ready)
+                        return StateSerializer.GetDialogueStateJson();
+                    break;
+
+                case InteractableType.MonsterShrine:
+                    if (readinessState.Phase == "MonsterSelection" && readinessState.Ready)
+                        return JsonConfig.Serialize(new { success = true, action = "shrine_interact", type = expectedType, name = interactableName });
+                    break;
+
+                case InteractableType.Merchant:
+                    if (readinessState.Phase == "Merchant" && readinessState.Ready)
+                        return JsonConfig.Serialize(new { success = true, action = "merchant_interact", type = expectedType, name = interactableName });
+                    break;
+
+                case InteractableType.AetherSpring:
+                    if (readinessState.Phase == "AetherSpring" && readinessState.Ready)
+                        return JsonConfig.Serialize(new { success = true, action = "aether_spring_interact", type = expectedType, name = interactableName });
+                    break;
+
+                case InteractableType.StartRun:
+                    if (readinessState.Phase == "DifficultySelection" && readinessState.Ready)
+                        return StateSerializer.GetDifficultySelectionStateJson();
+                    if (readinessState.Phase == "MonsterSelection" && readinessState.Ready)
+                        return StateSerializer.GetMonsterSelectionStateJson();
+                    break;
+            }
+
+            // Timeout or unexpected state
+            Plugin.Log.LogWarning($"WaitForInteractionResult: Expected {expectedType}, got Phase={readinessState.Phase}, Ready={readinessState.Ready}, BlockReason={readinessState.BlockReason}");
             return JsonConfig.Serialize(new
             {
                 success = true,
                 action = "interact_pending",
                 type = expectedType,
                 name = interactableName,
-                note = "Interaction triggered, menu may still be opening"
+                note = $"Interaction triggered, current phase: {readinessState.Phase}, ready: {readinessState.Ready}"
             });
         }
 

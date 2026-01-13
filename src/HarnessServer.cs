@@ -163,9 +163,8 @@ namespace AethermancerHarness
                         else
                         {
                             var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleExplorationInteract(body));
-                            responseBody = result;
+                            // Note: Handler runs on HTTP thread, uses RunOnMainThreadAndWait internally for Unity calls
+                            responseBody = HandleExplorationInteract(body);
                         }
                         break;
 

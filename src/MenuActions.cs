@@ -46,7 +46,7 @@ namespace AethermancerHarness
                 if (TimedOut(startTime, timeoutMs))
                     return JsonConfig.Error("Timeout waiting for PostCombatMenu to open", new { phase = GamePhase.Timeout });
 
-                System.Threading.Thread.Sleep(100);
+                Plugin.SafeSleep(100);
             }
 
             return ProcessPostCombatStates(startTime, timeoutMs);
@@ -115,7 +115,7 @@ namespace AethermancerHarness
                 if (inEndOfRun)
                 {
                     Plugin.RunOnMainThreadAndWait(() => AutoContinueFromEndOfRun());
-                    System.Threading.Thread.Sleep(500);
+                    Plugin.SafeSleep(500);
                     continue;
                 }
 
@@ -131,7 +131,7 @@ namespace AethermancerHarness
                         if (worthinessCanContinue)
                         {
                             Plugin.RunOnMainThreadAndWait(() => TriggerContinue(UIController.Instance.PostCombatMenu));
-                            System.Threading.Thread.Sleep(200);
+                            Plugin.SafeSleep(200);
                         }
                         break;
 
@@ -156,7 +156,7 @@ namespace AethermancerHarness
                             else
                             {
                                 Plugin.RunOnMainThreadAndWait(() => TriggerContinue(UIController.Instance.PostCombatMenu));
-                                System.Threading.Thread.Sleep(200);
+                                Plugin.SafeSleep(200);
                             }
                         }
                         break;
@@ -165,7 +165,7 @@ namespace AethermancerHarness
                         break;
                 }
 
-                System.Threading.Thread.Sleep(100);
+                Plugin.SafeSleep(100);
             }
         }
 
@@ -207,7 +207,7 @@ namespace AethermancerHarness
             {
                 if (condition())
                     return true;
-                System.Threading.Thread.Sleep(pollIntervalMs);
+                Plugin.SafeSleep(pollIntervalMs);
             }
             return false;
         }
@@ -266,7 +266,7 @@ namespace AethermancerHarness
                 Plugin.RunOnMainThreadAndWait(() => isOpen = StateSerializer.IsInSkillSelection());
                 if (isOpen)
                     return true;
-                System.Threading.Thread.Sleep(100);
+                Plugin.SafeSleep(100);
             }
             return false;
         }
@@ -300,7 +300,7 @@ namespace AethermancerHarness
             {
                 menuList.SelectByIndex(choiceIndex);
                 TriggerMenuConfirm(menuList);
-                System.Threading.Thread.Sleep(500);
+                Plugin.SafeSleep(500);
                 return WaitForPostCombatComplete();
             }
 
@@ -318,7 +318,7 @@ namespace AethermancerHarness
 
             menuList.SelectByIndex(rerollIndex);
             TriggerMenuConfirm(menuList);
-            System.Threading.Thread.Sleep(500);
+            Plugin.SafeSleep(500);
             return StateSerializer.GetSkillSelectionStateJson();
         }
 
@@ -330,7 +330,7 @@ namespace AethermancerHarness
 
             menuList.SelectByIndex(bonusIndex);
             TriggerMenuConfirm(menuList);
-            System.Threading.Thread.Sleep(500);
+            Plugin.SafeSleep(500);
             return WaitForPostCombatComplete();
         }
 
@@ -434,7 +434,7 @@ namespace AethermancerHarness
                         menu.OnConfirm();
                 });
 
-                System.Threading.Thread.Sleep(500);
+                Plugin.SafeSleep(500);
 
                 return WaitForMonsterSelectionResult(monsterName, targetShift, isRandom);
             }
@@ -464,7 +464,7 @@ namespace AethermancerHarness
                 if (!StateSerializer.IsInMonsterSelection())
                     break;
 
-                System.Threading.Thread.Sleep(100);
+                Plugin.SafeSleep(100);
             }
 
             if (StateSerializer.IsInSkillSelection())
@@ -511,7 +511,7 @@ namespace AethermancerHarness
                 shrineTrigger.GenerateMementosForShrine(ignoreHasData: true, isReroll: true);
             });
 
-            System.Threading.Thread.Sleep(500);
+            Plugin.SafeSleep(500);
             return StateSerializer.GetMonsterSelectionStateJson();
         }
 
@@ -545,7 +545,7 @@ namespace AethermancerHarness
                 InputConfirmMethod.Invoke(menu.MenuList, null);
             });
 
-            System.Threading.Thread.Sleep(600);
+            Plugin.SafeSleep(600);
 
             if (StateSerializer.IsInEquipmentSelection())
             {
@@ -585,13 +585,13 @@ namespace AethermancerHarness
                 InputConfirmMethod.Invoke(menu.MenuList, null);
             });
 
-            System.Threading.Thread.Sleep(300);
+            Plugin.SafeSleep(300);
 
             // Close the popup that appears after scrapping
             if (WaitUntil(() => PopupController.Instance.IsOpen, 2000, 50))
                 Plugin.RunOnMainThreadAndWait(() => PopupController.Instance.Close());
 
-            System.Threading.Thread.Sleep(300);
+            Plugin.SafeSleep(300);
 
             return JsonConfig.Serialize(new
             {
@@ -611,6 +611,30 @@ namespace AethermancerHarness
         public static bool IsDialogueOpen()
         {
             return UIController.Instance?.DialogueDisplay?.IsOpen ?? false;
+        }
+
+        /// <summary>
+        /// Check if the dialogue has actual selectable choices in the UI menu.
+        /// Returns false for continuation-only dialogue (where options array may have text but no menu items).
+        /// </summary>
+        public static bool HasMeaningfulDialogueChoice()
+        {
+            var display = UIController.Instance?.DialogueDisplay;
+            if (display == null || !display.IsOpen)
+                return false;
+
+            var dialogueData = GetCurrentDialogueData();
+            if (dialogueData == null)
+                return false;
+
+            var characterDisplay = dialogueData.LeftIsSpeaking
+                ? display.LeftCharacterDisplay
+                : display.RightCharacterDisplay;
+
+            if (dialogueData.IsChoiceEvent)
+                return (characterDisplay.ChoiceEventOptions?.List?.Count ?? 0) > 0;
+
+            return (characterDisplay.DialogOptions?.List?.Count ?? 0) > 0;
         }
 
         /// <summary>
@@ -635,12 +659,12 @@ namespace AethermancerHarness
             var dialogueInteractable = GetCurrentDialogue();
             var dialogueData = GetCurrentDialogueData();
             var display = UIController.Instance.DialogueDisplay;
-            var options = dialogueData.DialogueOptions;
 
-            if (options == null || options.Length == 0)
+            // Check if there are actual selectable choices in the UI, not just continuation text
+            if (!HasMeaningfulDialogueChoice())
             {
                 Plugin.RunOnMainThreadAndWait(() => display.OnConfirm(isMouseClick: false));
-                System.Threading.Thread.Sleep(200);
+                WaitUntilReady(3000);
 
                 if (!IsDialogueOpen())
                     return JsonConfig.Serialize(new { success = true, phase = GamePhase.Exploration, dialogueComplete = true });
@@ -648,7 +672,7 @@ namespace AethermancerHarness
                 return StateSerializer.GetDialogueStateJson();
             }
 
-            bool isEndAndForceSkip = false;
+            var options = dialogueData.DialogueOptions;
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
@@ -664,11 +688,8 @@ namespace AethermancerHarness
                 dialogueInteractable.TriggerNodeOnCloseEvents();
                 dialogueInteractable.SelectDialogueOption(choiceIndex, options.Length, out bool isEnd, out bool forceSkip);
 
-                isEndAndForceSkip = isEnd && forceSkip;
-                if (isEndAndForceSkip)
-                {
+                if (isEnd && forceSkip)
                     UIController.Instance.SetDialogueVisibility(visible: false);
-                }
                 else if (IsDialogueOpen())
                 {
                     var nextDialogue = dialogueInteractable.GetNextDialogue();
@@ -677,7 +698,7 @@ namespace AethermancerHarness
                 }
             });
 
-            System.Threading.Thread.Sleep(isEndAndForceSkip ? 300 : 200);
+            WaitUntilReady(3000);
             return GetPostDialogueState();
         }
 
@@ -733,7 +754,7 @@ namespace AethermancerHarness
 
             UIController.Instance.SetMerchantMenuVisibility(visible: false);
             WaitUntil(() => !IsMerchantMenuOpen(), 2000, 50);
-            System.Threading.Thread.Sleep(200);
+            Plugin.SafeSleep(200);
 
             return JsonConfig.Serialize(new
             {
@@ -782,7 +803,7 @@ namespace AethermancerHarness
                     return StateSerializer.GetEquipmentSelectionStateJson();
             }
 
-            System.Threading.Thread.Sleep(200);
+            Plugin.SafeSleep(200);
             return StateSerializer.GetMerchantStateJson();
         }
 
@@ -827,7 +848,7 @@ namespace AethermancerHarness
                 menu.OnConfirm();
             });
 
-            System.Threading.Thread.Sleep(300);
+            Plugin.SafeSleep(300);
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
@@ -875,7 +896,7 @@ namespace AethermancerHarness
             });
 
             WaitUntil(() => !StateSerializer.IsInAetherSpringMenu(), 3000, 50);
-            System.Threading.Thread.Sleep(300);
+            Plugin.SafeSleep(300);
 
             return JsonConfig.Serialize(new
             {
