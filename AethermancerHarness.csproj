@@ -15,6 +15,7 @@
 
   <!-- BepInEx References -->
   <ItemGroup>
+    <Compile Remove="references/**/*.cs" />
     <Reference Include="BepInEx">
       <HintPath>$(BepInExPath)/BepInEx.dll</HintPath>
       <Private>false</Private>

@@ -226,9 +226,18 @@ namespace AethermancerHarness
 
                     case InteractableType.Npc:
                     case InteractableType.Event:
-                        if (IsDialogueOpen())
+                        bool dialogueOpen = false;
+                        bool dialogueDataReady = false;
+                        bool dialogueInteractableReady = false;
+                        Plugin.RunOnMainThreadAndWait(() =>
                         {
-                            System.Threading.Thread.Sleep(200);
+                            dialogueOpen = IsDialogueOpen();
+                            dialogueInteractableReady = GetCurrentDialogue() != null;
+                            dialogueDataReady = GetCurrentDialogueData() != null;
+                            Plugin.Log.LogInfo($"[MainThread] IsDialogueOpen={dialogueOpen}, CurrentDialogue={dialogueInteractableReady}, DialogueData={dialogueDataReady}");
+                        });
+                        if (dialogueOpen && dialogueDataReady)
+                        {
                             return StateSerializer.GetDialogueStateJson();
                         }
                         break;

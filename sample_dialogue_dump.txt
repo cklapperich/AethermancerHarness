@@ -1,0 +1,97 @@
+{
+  "success": true,
+  "timestamp": "20:13:56.100",
+  "IsDialogueOpen": true,
+  "InputAllowed": true,
+  "InputEnabled": true,
+  "IsLastLine": true,
+  "TimeOpen": 61.7220459,
+  "LeftIsSpeaking": false,
+  "DialogueData": {
+    "DialogueText": "<style=\"speech\">I hope this will help you and Cherufe!</style>",
+    "IsChoiceEvent": true,
+    "OptionsCount": 0,
+    "Options": [],
+    "AllOptionsSmall": false,
+    "LastOptionIsSmall": false,
+    "EnableMonsterDetails": false,
+    "LeftCharacterName": "Siriux",
+    "RightCharacterName": "Lily",
+    "LeftIsSpeaking": false
+  },
+  "DialogueInteractable": {
+    "CharacterName": "Lily",
+    "InteractableType": "NPC",
+    "OneTimeDialogue": false,
+    "UseDialoguePool": true,
+    "CanGoBack": false
+  },
+  "CurrentNode": {
+    "DialogueText": "<style=\"speech\">I hope this will help you and {selection0}!</style>",
+    "LocalizedText": "<style=\"speech\">I hope this will help you and {selection0}!</style>",
+    "IsChoiceEvent": true,
+    "IsMultiplicatorNode": false,
+    "AutopickIfChoice": false,
+    "AllOptionsSmall": false,
+    "LastOptionIsSmall": false,
+    "EnableMonsterDetails": false,
+    "OptionsCount": 0,
+    "Options": []
+  },
+  "EventManager": {
+    "HasCurrentInteraction": true,
+    "CurrentOptionsCount": 0,
+    "CurrentOptionTypes": [],
+    "PreviousSelectionsCount": 2
+  },
+  "LeftCharacterDisplay": {
+    "Side": "Left",
+    "Available": true,
+    "IsTalking": false,
+    "IsHidden": true,
+    "IsDisplayingDialogue": false,
+    "IsDisplayingEvent": true,
+    "IsTextComplete": true,
+    "HasDialogOptions": false,
+    "DialogOptionsCount": 0,
+    "DialogOptionsCurrentIndex": 0,
+    "DialogOptionsIsSelecting": false,
+    "DialogOptionsIsLocked": false,
+    "HasChoiceEventOptions": false,
+    "ChoiceEventOptionsCount": 0,
+    "ChoiceEventOptionsCurrentIndex": 0,
+    "ChoiceEventOptionsIsSelecting": false,
+    "ChoiceEventOptionsIsLocked": false,
+    "SelectedOption": 0
+  },
+  "RightCharacterDisplay": {
+    "Side": "Right",
+    "Available": true,
+    "IsTalking": true,
+    "IsHidden": false,
+    "IsDisplayingDialogue": false,
+    "IsDisplayingEvent": true,
+    "IsTextComplete": true,
+    "HasDialogOptions": false,
+    "DialogOptionsCount": 0,
+    "DialogOptionsCurrentIndex": 0,
+    "DialogOptionsIsSelecting": false,
+    "DialogOptionsIsLocked": false,
+    "HasChoiceEventOptions": false,
+    "ChoiceEventOptionsCount": 0,
+    "ChoiceEventOptionsCurrentIndex": 0,
+    "ChoiceEventOptionsIsSelecting": false,
+    "ChoiceEventOptionsIsLocked": false,
+    "SelectedOption": 0
+  },
+  "OtherMenuStates": {
+    "IsInSkillSelection": false,
+    "IsInEquipmentSelection": false,
+    "IsInMonsterSelection": false,
+    "IsInMerchantMenu": false,
+    "IsInAetherSpringMenu": false,
+    "PopupOpen": false,
+    "IsPaused": false
+  }
+}
+

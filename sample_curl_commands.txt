@@ -1,0 +1,52 @@
+curl -s -X POST http://localhost:8080/exploration/interact \
+        -H "Content-Type: application/json" \
+        -d '{"name": "Lily"}' | jq '.'
+{                                       
+       "IsChoiceEvent": false,
+       "CanGoBack": false,
+       "Gold": 0,
+       "Phase": "Dialogue",
+       "Error": "Dialogue data not available"
+}
+
+Bash(curl -s -X POST http://localhost:8080/choice \
+        -H "Content-Type: application/json" \
+        -d '{"choiceName": "Event"}' | jq '.')
+ {               
+ 
+ 
+ 1. Need a new /dialogue/choice endpiont for dialogue events?
+ 2. /choice sould only return dialogue choice data
+ \
+ 3. initial interaction doesnt show dialogue state properly
+ 
+ curl -s -X POST http://localhost:8080/exploration/interact \
+        -H "Content-Type: application/json" \
+        -d '{"name": "Lily"}' | jq '.'
+{
+  "IsChoiceEvent": false,
+  "CanGoBack": false,
+  "Gold": 0,
+  "Phase": "Dialogue",
+  "Error": "Dialogue data not available"
+}
+
+Subsequent dialogue info DOES show appropriately:
+curl -s -X POST http://localhost:8080/choice         -H "Content-Type: application/json"         -d '{"choiceName": "0"}' | jq '.'
+{
+  "Npc": "Lily",
+  "DialogueText": "I hope this will help you and Cherufe!",
+  "IsChoiceEvent": true,
+  "Choices": [],
+  "CanGoBack": false,
+  "Gold": 22,
+
+... rest of state ..
+
+}
+
+@src/menuactions.cs
+@references/uicontroller.js
+
+we need to either find a definitive cause for this,
+and if we cannot, add logging with Plugin.LogInfo()

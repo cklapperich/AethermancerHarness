@@ -498,9 +498,7 @@ namespace AethermancerHarness
                 IsChoiceEvent = dialogueData.IsChoiceEvent,
                 Choices = choices,
                 CanGoBack = canGoBack,
-                Gold = InventoryManager.Instance?.Gold ?? 0,
-                Artifacts = BuildArtifactsList(),
-                Party = BuildDetailedPartyList()
+                Gold = InventoryManager.Instance?.Gold ?? 0
             });
         }
 
