@@ -284,11 +284,24 @@ namespace AethermancerHarness
 
         private static string ExecuteSkillSelectionChoice(int choiceIndex)
         {
-            if (!StateSerializer.IsInSkillSelection())
-                return JsonConfig.Error("Not in skill selection screen");
+            string error = null;
+            SkillSelectMenu skillSelectMenu = null;
+            MenuList menuList = null;
 
-            var skillSelectMenu = UIController.Instance.PostCombatMenu.SkillSelectMenu;
-            var menuList = skillSelectMenu.MenuList;
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                if (!StateSerializer.IsInSkillSelection())
+                {
+                    error = "Not in skill selection screen";
+                    return;
+                }
+
+                skillSelectMenu = UIController.Instance.PostCombatMenu.SkillSelectMenu;
+                menuList = skillSelectMenu.MenuList;
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
 
             if (choiceIndex == -1)
                 return HandleSkillReroll(menuList, skillSelectMenu);
@@ -298,8 +311,12 @@ namespace AethermancerHarness
 
             if (choiceIndex >= 0 && choiceIndex <= 2)
             {
-                menuList.SelectByIndex(choiceIndex);
-                TriggerMenuConfirm(menuList);
+                Plugin.RunOnMainThreadAndWait(() =>
+                {
+                    menuList.SelectByIndex(choiceIndex);
+                    TriggerMenuConfirm(menuList);
+                });
+
                 Plugin.SafeSleep(500);
                 return WaitForPostCombatComplete();
             }
@@ -309,27 +326,59 @@ namespace AethermancerHarness
 
         private static string HandleSkillReroll(MenuList menuList, SkillSelectMenu skillSelectMenu)
         {
-            if (InventoryManager.Instance.SkillRerolls <= 0)
-                return JsonConfig.Error("No skill rerolls available");
+            string error = null;
+            int rerollIndex = -1;
 
-            int rerollIndex = FindMenuItemIndex(menuList, skillSelectMenu.RerollSkillsButton);
-            if (rerollIndex == -1)
-                return JsonConfig.Error("Could not find reroll button");
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                if (InventoryManager.Instance.SkillRerolls <= 0)
+                {
+                    error = "No skill rerolls available";
+                    return;
+                }
 
-            menuList.SelectByIndex(rerollIndex);
-            TriggerMenuConfirm(menuList);
+                rerollIndex = FindMenuItemIndex(menuList, skillSelectMenu.RerollSkillsButton);
+                if (rerollIndex == -1)
+                {
+                    error = "Could not find reroll button";
+                    return;
+                }
+
+                menuList.SelectByIndex(rerollIndex);
+                TriggerMenuConfirm(menuList);
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
+
             Plugin.SafeSleep(500);
-            return StateSerializer.GetSkillSelectionStateJson();
+
+            string result = null;
+            Plugin.RunOnMainThreadAndWait(() => result = StateSerializer.GetSkillSelectionStateJson());
+            return result;
         }
 
         private static string HandleMaxHealthBonus(MenuList menuList, SkillSelectMenu skillSelectMenu)
         {
-            int bonusIndex = FindMenuItemIndex(menuList, skillSelectMenu.AlternativeBonusButton);
-            if (bonusIndex == -1)
-                return JsonConfig.Error("Max health option not available");
+            string error = null;
+            int bonusIndex = -1;
 
-            menuList.SelectByIndex(bonusIndex);
-            TriggerMenuConfirm(menuList);
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                bonusIndex = FindMenuItemIndex(menuList, skillSelectMenu.AlternativeBonusButton);
+                if (bonusIndex == -1)
+                {
+                    error = "Max health option not available";
+                    return;
+                }
+
+                menuList.SelectByIndex(bonusIndex);
+                TriggerMenuConfirm(menuList);
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
+
             Plugin.SafeSleep(500);
             return WaitForPostCombatComplete();
         }
@@ -740,6 +789,38 @@ namespace AethermancerHarness
             });
 
             WaitUntilReady(3000);
+
+            // Check if we should auto-advance (only if config enabled)
+            if (!Plugin.AutoAdvanceDialogue)
+                return GetPostDialogueState();
+
+            // Re-fetch fresh dialogue data after state change (thread-safe)
+            if (!IsDialogueOpen())
+                return GetPostDialogueState();
+
+            dialogueData = GetCurrentDialogueData();
+            if (dialogueData == null)
+                return GetPostDialogueState();
+
+            options = dialogueData.DialogueOptions;
+
+            // Check if any option text equals "Event" exactly (capital E)
+            for (int i = 0; i < options.Length; i++)
+            {
+                if (options[i] == "Event")
+                {
+                    Plugin.Log.LogInfo($"Auto-advancing: Found 'Event' option at index {i}");
+                    return ExecuteDialogueChoice(i);
+                }
+            }
+
+            // Check if 0 or 1 options - auto-advance with index 0
+            if (options.Length == 0 || options.Length == 1)
+            {
+                Plugin.Log.LogInfo($"Auto-advancing: {options.Length} options available");
+                return ExecuteDialogueChoice(0);
+            }
+
             return GetPostDialogueState();
         }
 

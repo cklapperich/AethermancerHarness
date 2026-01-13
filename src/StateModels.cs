@@ -288,6 +288,7 @@ namespace AethermancerHarness
 
     public class SkillChoice
     {
+        public int Index { get; set; }
         public string Name { get; set; }
         public bool IsMaverick { get; set; }
         public string Description { get; set; }
@@ -371,10 +372,6 @@ namespace AethermancerHarness
         public int RerollsAvailable { get; set; }
         public bool CanChooseMaxHealth { get; set; }
         public int PendingLevelUps { get; set; }
-        public int Gold { get; set; }
-        public List<ArtifactInfo> Artifacts { get; set; }
-        public int MonsterSoulCount { get; set; }
-        public List<MonsterDetails> Party { get; set; }
     }
 
     public class CombatState : BaseState
@@ -388,7 +385,6 @@ namespace AethermancerHarness
         public List<ConsumableInfo> Consumables { get; set; }
         public int Gold { get; set; }
         public List<ArtifactInfo> Artifacts { get; set; }
-        public int MonsterSoulCount { get; set; }
     }
 
     public class CondensedCombatState : BaseState
@@ -410,7 +406,6 @@ namespace AethermancerHarness
         public int Gold { get; set; }
         public List<MonsterDetails> Party { get; set; }
         public List<ArtifactInfo> Artifacts { get; set; }
-        public int MonsterSoulCount { get; set; }
         public List<MonsterGroupInfo> MonsterGroups { get; set; }
         public List<InteractableInfo> Interactables { get; set; }
     }

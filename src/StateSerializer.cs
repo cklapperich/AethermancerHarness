@@ -709,11 +709,7 @@ namespace AethermancerHarness
                 Choices = choices,
                 RerollsAvailable = InventoryManager.Instance?.SkillRerolls ?? 0,
                 CanChooseMaxHealth = canChooseMaxHealth,
-                PendingLevelUps = pendingLevelUps,
-                Gold = InventoryManager.Instance?.Gold ?? 0,
-                Artifacts = BuildArtifactsList(),
-                MonsterSoulCount = InventoryManager.Instance?.MonsterSouls ?? 0,
-                Party = BuildDetailedPartyList()
+                PendingLevelUps = pendingLevelUps
             });
         }
 
@@ -721,6 +717,7 @@ namespace AethermancerHarness
         {
             var choice = new SkillChoice
             {
+                Index = index,
                 Name = skill.Skill?.Name ?? "Unknown",
                 IsMaverick = skill.Skill?.MaverickSkill ?? false
             };
@@ -834,8 +831,7 @@ namespace AethermancerHarness
                 Enemies = enemies,
                 Consumables = BuildConsumablesList(),
                 Gold = InventoryManager.Instance?.Gold ?? 0,
-                Artifacts = BuildArtifactsList(),
-                MonsterSoulCount = InventoryManager.Instance?.MonsterSouls ?? 0
+                Artifacts = BuildArtifactsList()
             });
         }
 
@@ -1121,7 +1117,6 @@ namespace AethermancerHarness
                 Gold = InventoryManager.Instance?.Gold ?? 0,
                 Party = BuildDetailedPartyList(),
                 Artifacts = BuildArtifactsList(),
-                MonsterSoulCount = InventoryManager.Instance?.MonsterSouls ?? 0,
                 MonsterGroups = BuildMonsterGroupsList(),
                 Interactables = BuildInteractablesList()
             });

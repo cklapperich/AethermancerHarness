@@ -25,9 +25,11 @@ namespace AethermancerHarness
         // Configuration
         private static ConfigEntry<bool> _watchableModeConfig;
         private static ConfigEntry<int> _watchableDelayMsConfig;
+        private static ConfigEntry<bool> _autoAdvanceDialogueConfig;
 
         public static bool WatchableMode => _watchableModeConfig?.Value ?? false;
         public static int WatchableDelayMs => _watchableDelayMsConfig?.Value ?? 500;
+        public static bool AutoAdvanceDialogue => _autoAdvanceDialogueConfig?.Value ?? true;
 
         // Main thread dispatcher for running Unity API calls from background threads
         private static readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();

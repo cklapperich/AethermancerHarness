@@ -57,6 +57,7 @@ namespace AethermancerHarness
                 catch (System.Exception e)
                 {
                     _logger.LogError($"Error in listener: {e.Message}");
+                    _logger.LogError($"Stack trace: {e.StackTrace}");
                 }
             }
         }
@@ -249,7 +250,14 @@ namespace AethermancerHarness
             }
             catch (System.Exception e)
             {
-                _logger.LogError($"Error handling request: {e}");
+                _logger.LogError($"Error handling request: {e.Message}");
+                _logger.LogError($"Exception type: {e.GetType().FullName}");
+                _logger.LogError($"Stack trace: {e.StackTrace}");
+                if (e.InnerException != null)
+                {
+                    _logger.LogError($"Inner exception: {e.InnerException.Message}");
+                    _logger.LogError($"Inner stack trace: {e.InnerException.StackTrace}");
+                }
                 SendResponse(response, JsonConfig.Error(e.Message), 500);
             }
         }
