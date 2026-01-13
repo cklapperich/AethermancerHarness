@@ -6,15 +6,30 @@ namespace AethermancerHarness
     {
         public static string ExecuteInstantTeleport(float x, float y, float z)
         {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot teleport during combat");
+            string error = null;
+            Vector3 oldPos = Vector3.zero;
 
-            var playerMovement = PlayerMovementController.Instance;
-            if (playerMovement == null)
-                return JsonConfig.Error("PlayerMovementController not available");
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                if (GameStateManager.Instance?.IsCombat ?? false)
+                {
+                    error = "Cannot teleport during combat";
+                    return;
+                }
 
-            var oldPos = playerMovement.transform.position;
-            playerMovement.transform.position = new Vector3(x, y, z);
+                var playerMovement = PlayerMovementController.Instance;
+                if (playerMovement == null)
+                {
+                    error = "PlayerMovementController not available";
+                    return;
+                }
+
+                oldPos = playerMovement.transform.position;
+                playerMovement.transform.position = new Vector3(x, y, z);
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
 
             return JsonConfig.Serialize(new {
                 success = true,
@@ -25,20 +40,31 @@ namespace AethermancerHarness
 
         public static string ExecuteAnimatedTeleport(float x, float y, float z)
         {
-            if (GameStateManager.Instance?.IsCombat ?? false)
-                return JsonConfig.Error("Cannot teleport during combat");
-
-            var playerMovement = PlayerMovementController.Instance;
-            if (playerMovement == null)
-                return JsonConfig.Error("PlayerMovementController not available");
-
-            var oldPos = playerMovement.transform.position;
+            string error = null;
+            Vector3 oldPos = Vector3.zero;
             var targetPos = new Vector3(x, y, z);
 
             Plugin.RunOnMainThreadAndWait(() =>
             {
+                if (GameStateManager.Instance?.IsCombat ?? false)
+                {
+                    error = "Cannot teleport during combat";
+                    return;
+                }
+
+                var playerMovement = PlayerMovementController.Instance;
+                if (playerMovement == null)
+                {
+                    error = "PlayerMovementController not available";
+                    return;
+                }
+
+                oldPos = playerMovement.transform.position;
                 playerMovement.TeleportToPOI(targetPos);
             });
+
+            if (error != null)
+                return JsonConfig.Error(error);
 
             // Wait for animation using ReadinessActions (HTTP thread - safe)
             ActionHandler.WaitUntilReady(5000);

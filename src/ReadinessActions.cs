@@ -46,6 +46,32 @@ namespace AethermancerHarness
                 state.Details.IsPriorityLayerOpen = gameStateManager.IsPriorityLayerOpen;
                 state.Details.IsPaused = gameStateManager.IsPaused;
 
+                // Check for scene loading (portal/zone transitions)
+                if (gameStateManager.IsLoadingScene)
+                {
+                    state.Ready = false;
+                    state.Phase = "SceneLoading";
+                    state.BlockReason = "SceneLoading";
+                    return state;
+                }
+
+                // Check for transition states (portal interaction, area changes)
+                if (gameStateManager.CurrentState == GameStateManager.EGameState.InTransition)
+                {
+                    state.Ready = false;
+                    state.Phase = "Transition";
+                    state.BlockReason = "InTransition";
+                    return state;
+                }
+
+                if (gameStateManager.CurrentState == GameStateManager.EGameState.InSceneTransition)
+                {
+                    state.Ready = false;
+                    state.Phase = "SceneTransition";
+                    state.BlockReason = "InSceneTransition";
+                    return state;
+                }
+
                 // Check for popup blocking (applies to all phases)
                 var popupOpen = PopupController.Instance?.IsOpen ?? false;
                 state.Details.PopupOpen = popupOpen;

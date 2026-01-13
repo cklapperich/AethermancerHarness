@@ -413,7 +413,6 @@ namespace AethermancerHarness
             if (error != null)
                 return JsonConfig.Error(error);
 
-            Plugin.Log.LogInfo($"ExecuteLootAll: Broke {brokenCount} destructibles and collected loot");
             return JsonConfig.Serialize(new { success = true, action = "loot_all", brokenCount });
         }
 

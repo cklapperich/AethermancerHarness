@@ -151,9 +151,8 @@ namespace AethermancerHarness
                         else
                         {
                             var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleTeleport(body));
-                            responseBody = result;
+                            // Note: Handler runs on HTTP thread, uses RunOnMainThreadAndWait internally for Unity calls
+                            responseBody = HandleTeleport(body);
                         }
                         break;
 
@@ -197,9 +196,8 @@ namespace AethermancerHarness
                         else
                         {
                             var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleNpcInteract(body));
-                            responseBody = result;
+                            // Note: Handler runs on HTTP thread, uses RunOnMainThreadAndWait internally for Unity calls
+                            responseBody = HandleNpcInteract(body);
                         }
                         break;
 
@@ -210,9 +208,8 @@ namespace AethermancerHarness
                         else
                         {
                             var body = ReadBody(request);
-                            string result = null;
-                            Plugin.RunOnMainThreadAndWait(() => result = HandleChoice(body));
-                            responseBody = result;
+                            // Note: Handler runs on HTTP thread, uses RunOnMainThreadAndWait internally for Unity calls
+                            responseBody = HandleChoice(body);
                         }
                         break;
 

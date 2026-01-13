@@ -350,32 +350,59 @@ namespace AethermancerHarness
 
         public static string ExecuteChoice(string choiceName, string shift = null)
         {
-            var (choiceIndex, error) = ResolveChoiceName(choiceName);
+            // Determine phase and resolve choice index on main thread
+            int choiceIndex = -1;
+            string phase = null;
+            string error = null;
+
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                (choiceIndex, error) = ResolveChoiceName(choiceName);
+                if (error != null)
+                    return;
+
+                // Determine which phase we're in
+                if (StateSerializer.IsInSkillSelection())
+                    phase = "skill";
+                else if (StateSerializer.IsInEquipmentSelection())
+                    phase = "equipment";
+                else if (IsMerchantMenuOpen())
+                    phase = "merchant";
+                else if (StateSerializer.IsInDifficultySelection())
+                    phase = "difficulty";
+                else if (StateSerializer.IsInMonsterSelection())
+                    phase = "monster";
+                else if (StateSerializer.IsInAetherSpringMenu())
+                    phase = "aetherspring";
+                else if (IsDialogueOpen())
+                    phase = "dialogue";
+                else
+                    error = "No active choice context (not in dialogue, equipment selection, difficulty selection, merchant, or monster selection)";
+            });
+
             if (error != null)
                 return JsonConfig.Error(error);
 
-            if (StateSerializer.IsInSkillSelection())
-                return ExecuteSkillSelectionChoice(choiceIndex);
-
-            if (StateSerializer.IsInEquipmentSelection())
-                return ExecuteEquipmentChoice(choiceIndex);
-
-            if (IsMerchantMenuOpen())
-                return ExecuteMerchantChoice(choiceIndex);
-
-            if (StateSerializer.IsInDifficultySelection())
-                return ExecuteDifficultyChoice(choiceIndex);
-
-            if (StateSerializer.IsInMonsterSelection())
-                return ExecuteMonsterSelectionChoice(choiceIndex, shift);
-
-            if (StateSerializer.IsInAetherSpringMenu())
-                return ExecuteAetherSpringChoice(choiceIndex);
-
-            if (IsDialogueOpen())
-                return ExecuteDialogueChoice(choiceIndex);
-
-            return JsonConfig.Error("No active choice context (not in dialogue, equipment selection, difficulty selection, merchant, or monster selection)");
+            // Dispatch to appropriate handler based on phase
+            switch (phase)
+            {
+                case "skill":
+                    return ExecuteSkillSelectionChoice(choiceIndex);
+                case "equipment":
+                    return ExecuteEquipmentChoice(choiceIndex);
+                case "merchant":
+                    return ExecuteMerchantChoice(choiceIndex);
+                case "difficulty":
+                    return ExecuteDifficultyChoice(choiceIndex);
+                case "monster":
+                    return ExecuteMonsterSelectionChoice(choiceIndex, shift);
+                case "aetherspring":
+                    return ExecuteAetherSpringChoice(choiceIndex);
+                case "dialogue":
+                    return ExecuteDialogueChoice(choiceIndex);
+                default:
+                    return JsonConfig.Error("Unknown choice phase");
+            }
         }
 
         // =====================================================
@@ -642,11 +669,25 @@ namespace AethermancerHarness
         /// </summary>
         public static string ExecuteNpcInteract(string npcName)
         {
-            if (GameStateManager.Instance.IsCombat)
-                return JsonConfig.Error("Cannot interact with NPCs during combat");
+            string error = null;
 
-            if (IsDialogueOpen())
-                return JsonConfig.Error("Dialogue already open");
+            Plugin.RunOnMainThreadAndWait(() =>
+            {
+                if (GameStateManager.Instance.IsCombat)
+                {
+                    error = "Cannot interact with NPCs during combat";
+                    return;
+                }
+
+                if (IsDialogueOpen())
+                {
+                    error = "Dialogue already open";
+                    return;
+                }
+            });
+
+            if (error != null)
+                return JsonConfig.Error(error);
 
             return TeleportAndInteract(npcName);
         }
